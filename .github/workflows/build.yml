@@ -45,7 +45,7 @@ jobs:
       - run: yarn install && CI=false yarn run build
         working-directory: ./web
       - name: Upload build artifacts
-        if: github.repository == 'casdoor/casdoor' && github.event_name == 'push'
+        if: github.repository == 'lameduse/fork-casdoor' && github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build-${{ github.run_id }}
@@ -158,7 +158,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-    if: github.repository == 'casdoor/casdoor' && github.event_name == 'push'
+    if: github.repository == 'lameduse/fork-casdoor' && github.event_name == 'push'
     needs: [ frontend, backend, linter, e2e ]
     outputs:
       new-release-published: ${{ steps.semantic.outputs.new_release_published }}
@@ -171,7 +171,7 @@ jobs:
         id: semantic
         uses: cycjimmy/semantic-release-action@v4
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.LAMEDUSE_TOKEN }}
 
   github-release:
     name: GitHub Release
@@ -179,7 +179,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-    if: github.repository == 'casdoor/casdoor' && github.event_name == 'push' && needs.tag-release.outputs.new-release-published == 'true'
+    if: github.repository == 'lameduse/fork-casdoor' && github.event_name == 'push' && needs.tag-release.outputs.new-release-published == 'true'
     needs: [ tag-release ]
     steps:
       - name: Checkout
@@ -216,7 +216,7 @@ jobs:
           version: '~> v2'
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.LAMEDUSE_TOKEN }}
 
   docker-release:
     name: Docker Release
@@ -224,7 +224,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-    if: github.repository == 'casdoor/casdoor' && github.event_name == 'push' && needs.tag-release.outputs.new-release-published == 'true'
+    if: github.repository == 'lameduse/fork-casdoor' && github.event_name == 'push' && needs.tag-release.outputs.new-release-published == 'true'
     needs: [ tag-release ]
     steps:
       - name: Checkout
@@ -266,37 +266,38 @@ jobs:
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v1
-        if: github.repository == 'casdoor/casdoor' && github.event_name == 'push' && steps.should_push.outputs.push=='true'
+        if: github.repository == 'lameduse/fork-casdoor' && github.event_name == 'push' && steps.should_push.outputs.push=='true'
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          username: ${{ secrets.LAMEDUSE_REGISTRY_USERNAME }}
+          password: ${{ secrets.LAMEDUSE_REGISTRY_TOKEN }}
+          registry: registry.lameduse.cloud
 
       - name: Push to Docker Hub
         uses: docker/build-push-action@v3
-        if: github.repository == 'casdoor/casdoor' && github.event_name == 'push' && steps.should_push.outputs.push=='true'
+        if: github.repository == 'lameduse/fork-casdoor' && github.event_name == 'push' && steps.should_push.outputs.push=='true'
         with:
           context: .
           target: STANDARD
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: casbin/casdoor:${{ needs.tag-release.outputs.new-release-version }},casbin/casdoor:latest
+          tags: registry.lameduse.cloud/casdoor:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/casdoor:latest
 
       - name: Push All In One Version to Docker Hub
         uses: docker/build-push-action@v3
-        if: github.repository == 'casdoor/casdoor' && github.event_name == 'push' && steps.should_push.outputs.push=='true'
+        if: github.repository == 'lameduse/fork-casdoor' && github.event_name == 'push' && steps.should_push.outputs.push=='true'
         with:
           context: .
           target: ALLINONE
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: casbin/casdoor-all-in-one:${{ needs.tag-release.outputs.new-release-version }},casbin/casdoor-all-in-one:latest
+          tags: registry.lameduse.cloud/casdoor-all-in-one:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/casdoor-all-in-one:latest
 
       - uses: actions/checkout@v3
         if: steps.should_push.outputs.push=='true'
         with:
-          repository: casdoor/casdoor-helm
+          repository: lameduse/fork-casdoor-helm
           ref: 'master'
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          token: ${{ secrets.LAMEDUSE_TOKEN }}
 
       - name: Update Helm Chart
         if: steps.should_push.outputs.push=='true'
@@ -305,7 +306,7 @@ jobs:
           sed -i "s/appVersion: .*/appVersion: ${{ needs.tag-release.outputs.new-release-version }}/g" ./charts/casdoor/Chart.yaml
           sed -i "s/version: .*/version: ${{ needs.tag-release.outputs.new-release-version }}/g" ./charts/casdoor/Chart.yaml
 
-          REGISTRY=oci://registry-1.docker.io/casbin
+          REGISTRY=oci://registry.lameduse.cloud/casdoor
           cd charts/casdoor
           helm package .
           PKG_NAME=$(ls *.tgz)
@@ -314,8 +315,8 @@ jobs:
           rm $PKG_NAME
 
           # Commit and push the changes back to the repository
-          git config --global user.name "casbin-bot"
-          git config --global user.email "bot@casbin.org"
+          git config --global user.name "lameduse-bot"
+          git config --global user.email "meduvia@lameduse.fr"
           git add Chart.yaml index.yaml
           git commit -m "chore(helm): bump helm charts appVersion to ${{ needs.tag-release.outputs.new-release-version }}"
           git tag ${{ needs.tag-release.outputs.new-release-version }}
