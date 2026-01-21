@@ -280,7 +280,7 @@ jobs:
           target: STANDARD
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: registry.lameduse.cloud/casdoor:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/casdoor:latest
+          tags: registry.lameduse.cloud/restricted/casdoor:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/restricted/casdoor:latest
 
       - name: Push All In One Version to Docker Hub
         uses: docker/build-push-action@v3
@@ -290,7 +290,7 @@ jobs:
           target: ALLINONE
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: registry.lameduse.cloud/casdoor-all-in-one:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/casdoor-all-in-one:latest
+          tags: registry.lameduse.cloud/restricted/casdoor-all-in-one:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/restricted/casdoor-all-in-one:latest
 
       - uses: actions/checkout@v3
         if: steps.should_push.outputs.push=='true'
