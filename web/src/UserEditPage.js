@@ -33,6 +33,7 @@ import SamlWidget from "./common/SamlWidget";
 import RegionSelect from "./common/select/RegionSelect";
 import WebAuthnCredentialTable from "./table/WebauthnCredentialTable";
 import ManagedAccountTable from "./table/ManagedAccountTable";
+import AddressTable from "./table/AddressTable";
 import PropertyTable from "./table/propertyTable";
 import {CountryCodeSelect} from "./common/select/CountryCodeSelect";
 import PopconfirmModal from "./common/modal/PopconfirmModal";
@@ -596,6 +597,16 @@ class UserEditPage extends React.Component {
             </Col>
           </Row>
         </React.Fragment>
+      );
+    } else if (accountItem.name === "Addresses") {
+      return (
+        <AddressTable
+          title={i18next.t("user:Addresses")}
+          table={this.state.user.addresses}
+          onUpdateTable={(value) => {
+            this.updateUserField("addresses", value);
+          }}
+        />
       );
     } else if (accountItem.name === "Affiliation") {
       return (
@@ -1410,29 +1421,24 @@ class UserEditPage extends React.Component {
             organizationName: this.state.user.owner,
             userName: this.state.user.name,
           });
-
-          if (this.props.history !== undefined) {
-            if (exitAfterSave) {
-              const userListUrl = sessionStorage.getItem("userListUrl");
-              if (userListUrl !== null) {
-                this.props.history.push(userListUrl);
-              } else {
-                if (Setting.isLocalAdminUser(this.props.account)) {
-                  this.props.history.push("/users");
-                } else {
-                  this.props.history.push("/");
-                }
-              }
+          if (exitAfterSave) {
+            if (this.state.returnUrl) {
+              window.location.href = this.state.returnUrl;
+              return;
+            }
+            const userListUrl = sessionStorage.getItem("userListUrl");
+            if (userListUrl !== null) {
+              this.props.history.push(userListUrl);
             } else {
-              if (location.pathname !== "/account") {
-                this.props.history.push(`/users/${this.state.user.owner}/${this.state.user.name}`);
+              if (Setting.isLocalAdminUser(this.props.account)) {
+                this.props.history.push("/users");
+              } else {
+                this.props.history.push("/");
               }
             }
           } else {
-            if (exitAfterSave) {
-              if (this.state.returnUrl) {
-                window.location.href = this.state.returnUrl;
-              }
+            if (location.pathname !== "/account") {
+              this.props.history.push(`/users/${this.state.user.owner}/${this.state.user.name}`);
             }
           }
         } else {

@@ -22,7 +22,6 @@ import * as Setting from "./Setting";
 class OrderPayPage extends React.Component {
   constructor(props) {
     super(props);
-    const params = new URLSearchParams(window.location.search);
     this.state = {
       owner: props?.match?.params?.organizationName ?? props?.match?.params?.owner ?? null,
       orderName: props?.match?.params?.orderName ?? null,
@@ -31,7 +30,7 @@ class OrderPayPage extends React.Component {
       productInfos: [],
       paymentEnv: "",
       isProcessingPayment: false,
-      isViewMode: params.get("view") === "true",
+      isViewMode: false,
     };
   }
 
@@ -61,6 +60,7 @@ class OrderPayPage extends React.Component {
       this.setState({
         order: res.data,
         productInfos: res.data?.productInfos,
+        isViewMode: res.data?.state !== "Created",
       }, () => {
         this.getProduct();
       });
@@ -90,12 +90,12 @@ class OrderPayPage extends React.Component {
   }
 
   getPrice(order) {
-    return `${Setting.getCurrencySymbol(order?.currency)}${order?.price} (${Setting.getCurrencyText(order)})`;
+    return `${Setting.getCurrencySymbol(order?.currency)}${order?.price} (${Setting.getCurrencyText(order?.currency)})`;
   }
 
   getProductPrice(product) {
     const price = product.price * (product.quantity ?? 1);
-    return `${Setting.getCurrencySymbol(this.state.order?.currency)}${price.toFixed(2)} (${Setting.getCurrencyText(this.state.order)})`;
+    return `${Setting.getCurrencySymbol(this.state.order?.currency)}${price.toFixed(2)} (${Setting.getCurrencyText(this.state.order?.currency)})`;
   }
 
   // Call Wechat Pay via jsapi
@@ -181,6 +181,7 @@ class OrderPayPage extends React.Component {
   getPayButton(provider, onClick) {
     const providerTypeMap = {
       "Dummy": i18next.t("product:Dummy"),
+      "Balance": i18next.t("user:Balance"),
       "Alipay": i18next.t("product:Alipay"),
       "WeChat Pay": i18next.t("product:WeChat Pay"),
       "PayPal": i18next.t("product:PayPal"),
@@ -274,13 +275,13 @@ class OrderPayPage extends React.Component {
       <div className="login-content">
         <Spin spinning={this.state.isProcessingPayment} size="large" tip={i18next.t("product:Processing payment...")} style={{paddingTop: "10%"}} >
           <div style={{marginBottom: "20px"}}>
-            <Descriptions title={<span style={Setting.isMobile() ? {fontSize: 18} : {fontSize: 24}}>{i18next.t("order:Order Information")}</span>} bordered column={3}>
-              <Descriptions.Item label={i18next.t("order:Order ID")} span={3}>
+            <Descriptions title={<span style={Setting.isMobile() ? {fontSize: 18} : {fontSize: 24}}>{i18next.t("general:Order")}</span>} bordered column={3}>
+              <Descriptions.Item label={i18next.t("general:ID")} span={3}>
                 <span style={{fontSize: 16}}>
                   {order.name}
                 </span>
               </Descriptions.Item>
-              <Descriptions.Item label={i18next.t("order:Order Status")}>
+              <Descriptions.Item label={i18next.t("general:Status")}>
                 <span style={{fontSize: 16}}>
                   {order.state}
                 </span>
@@ -300,13 +301,13 @@ class OrderPayPage extends React.Component {
 
           <div style={{marginBottom: "20px"}}>
             <div style={{fontSize: Setting.isMobile() ? 18 : 24, fontWeight: "bold", marginBottom: "16px", color: "rgba(0, 0, 0, 0.85)"}}>
-              {i18next.t("product:Product Information")}
+              {i18next.t("product:Information")}
             </div>
             {productInfos.map(product => this.renderProduct(product))}
           </div>
 
           <div>
-            <Descriptions title={<span style={Setting.isMobile() ? {fontSize: 18} : {fontSize: 24}}>{i18next.t("payment:Payment Information")}</span>} bordered column={3}>
+            <Descriptions title={<span style={Setting.isMobile() ? {fontSize: 18} : {fontSize: 24}}>{i18next.t("order:Payment")}</span>} bordered column={3}>
               <Descriptions.Item label={i18next.t("product:Price")} span={3}>
                 <span style={{fontSize: 28, color: "red", fontWeight: "bold"}}>
                   {this.getPrice(order)}

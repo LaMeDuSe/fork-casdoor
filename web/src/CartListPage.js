@@ -42,6 +42,28 @@ class CartListPage extends BaseListPage {
     };
   }
 
+  clearCart() {
+    const user = Setting.deepCopy(this.state.user);
+    if (user === undefined || user === null) {
+      Setting.showMessage("error", i18next.t("general:Failed to delete"));
+      return;
+    }
+
+    user.cart = [];
+    UserBackend.updateUser(user.owner, user.name, user)
+      .then((res) => {
+        if (res.status === "ok") {
+          Setting.showMessage("success", i18next.t("general:Successfully deleted"));
+          this.fetch();
+        } else {
+          Setting.showMessage("error", `${i18next.t("general:Failed to delete")}: ${res.msg}`);
+        }
+      })
+      .catch(error => {
+        Setting.showMessage("error", `${i18next.t("general:Failed to connect to server")}: ${error}`);
+      });
+  }
+
   placeOrder() {
     if (this.state.isPlacingOrder) {
       return;
@@ -161,28 +183,14 @@ class CartListPage extends BaseListPage {
         },
       },
       {
-        title: i18next.t("payment:Currency"),
-        dataIndex: "currency",
-        key: "currency",
-        width: "120px",
-        sorter: true,
-        render: (text, record, index) => {
-          return Setting.getCurrencyWithFlag(text);
-        },
-      },
-      {
         title: i18next.t("product:Price"),
         dataIndex: "price",
         key: "price",
-        width: "120px",
+        width: "160px",
         sorter: true,
         render: (text, record) => {
-          const subtotal = record.price * record.quantity;
-          return (
-            <span>
-              {Setting.getCurrencySymbol(record.currency)}{subtotal.toFixed(2)}
-            </span>
-          );
+          const subtotal = (record.price * record.quantity).toFixed(2);
+          return Setting.getPriceDisplay(subtotal, record.currency);
         },
       },
       {
@@ -258,9 +266,17 @@ class CartListPage extends BaseListPage {
           title={() => {
             return (
               <div>
-                {i18next.t("general:Carts")}&nbsp;&nbsp;&nbsp;&nbsp;
+                {i18next.t("general:Cart")}&nbsp;&nbsp;&nbsp;&nbsp;
                 <Button size="small" onClick={() => this.props.history.push("/product-store")}>{i18next.t("general:Add")}</Button>
                 &nbsp;&nbsp;
+                <PopconfirmModal
+                  size="small"
+                  style={{marginRight: "8px"}}
+                  text={i18next.t("general:Clear")}
+                  title={i18next.t("general:Sure to delete") + `: ${i18next.t("general:Cart")} ?`}
+                  onConfirm={() => this.clearCart()}
+                  disabled={isEmpty}
+                />
                 <Button type="primary" size="small" onClick={() => this.placeOrder()} disabled={isEmpty || this.state.isPlacingOrder} loading={this.state.isPlacingOrder}>{i18next.t("general:Place Order")}</Button>
               </div>
             );
@@ -274,7 +290,7 @@ class CartListPage extends BaseListPage {
             <div style={{display: "flex", alignItems: "center", fontSize: "18px", fontWeight: "bold"}}>
               {i18next.t("product:Total Price")}:&nbsp;
               <span style={{color: "red", fontSize: "28px"}}>
-                {Setting.getCurrencySymbol(currency)}{total.toFixed(2)} ({Setting.getCurrencyText({currency: currency})})
+                {Setting.getCurrencySymbol(currency)}{total.toFixed(2)} ({Setting.getCurrencyText(currency)})
               </span>
             </div>
             <Button
