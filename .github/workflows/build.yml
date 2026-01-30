@@ -290,7 +290,7 @@ jobs:
           target: ALLINONE
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: registry.lameduse.cloud/restricted/casdoor-all-in-one:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/restricte  d/casdoor-all-in-one:latest
+          tags: registry.lameduse.cloud/restricted/casdoor-all-in-one:${{ needs.tag-release.outputs.new-release-version }},registry.lameduse.cloud/restricted/casdoor-all-in-one:latest
 
       - uses: actions/checkout@v3
         if: steps.should_push.outputs.push=='true'
