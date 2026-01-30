@@ -18,7 +18,6 @@ import {css} from "@emotion/react";
 import {Space, theme} from "antd";
 import * as React from "react";
 import i18next from "i18next";
-import * as Setting from "../../Setting";
 
 const {useToken} = theme;
 
