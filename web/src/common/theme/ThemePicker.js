@@ -22,10 +22,10 @@ import i18next from "i18next";
 const {useToken} = theme;
 
 export const THEMES = {
-  default: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
-  dark: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
-  lark: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
-  comic: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
+  default: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
+  dark: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
+  lark: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
+  comic: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
 };
 
 const themeTypes = {
