@@ -487,7 +487,7 @@ class App extends Component {
               : (
                 Conf.CustomFooter !== null ? Conf.CustomFooter : (
                   <React.Fragment>
-                  Powered by <a target="_blank" href="https://casdoor.org" rel="noreferrer"><img style={{paddingBottom: "3px"}} height={"20px"} alt={"Casdoor"} src={logo} /></a>
+                  Powered by <a target="_blank" href="https://lameduse.com" rel="noreferrer"><img style={{paddingBottom: "3px"}} height={"20px"} alt={"LaMeDuSe"} src={logo} /></a>
                   </React.Fragment>
                 )
               )
@@ -503,8 +503,8 @@ class App extends Component {
         title={
           <React.Fragment>
             <Tooltip title="Want to deploy your own AI assistant? Click to learn more!">
-              <a target="_blank" rel="noreferrer" href={"https://casdoor.com"}>
-                <img style={{width: "20px", marginRight: "10px", marginBottom: "2px"}} alt="help" src="https://casbin.org/img/casbin.svg" />
+              <a target="_blank" rel="noreferrer" href={"https://lameduse.com"}>
+                <img style={{width: "20px", marginRight: "10px", marginBottom: "2px"}} alt="help" src="https://assets.lameduse.net/logo/lameduse_logo_grad.svg" />
                 AI Assistant
               </a>
             </Tooltip>
@@ -722,7 +722,7 @@ class App extends Component {
       <React.Fragment>
         {(this.state.account === undefined || this.state.account === null) ?
           <Helmet>
-            <link rel="icon" href={"https://cdn.casdoor.com/static/favicon.png"} />
+            <link rel="icon" href={"https://assets.lameduse.net/logo/lameduse_logo_grad.svg"} />
           </Helmet> :
           <Helmet>
             <title>{this.state.account.organization?.displayName}</title>

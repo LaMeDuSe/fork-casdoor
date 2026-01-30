@@ -81,9 +81,9 @@ export function getAlgorithmNames(themeData) {
 
 export function getLogo(themes) {
   if (themes.includes("dark")) {
-    return `${StaticBaseUrl}/img/casdoor-logo_1185x256_dark.png`;
+    return `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`;
   } else {
-    return `${StaticBaseUrl}/img/casdoor-logo_1185x256.png`;
+    return `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`;
   }
 }
 
@@ -1937,7 +1937,7 @@ export function getUserCommonFields() {
 }
 
 export function getDefaultFooterContent() {
-  return `Powered by <a target="_blank" href="https://casdoor.org" rel="noreferrer"><img style="padding-bottom: 3px" height="20" alt="Casdoor" src="${StaticBaseUrl}/img/casdoor-logo_1185x256.png"/></a>`;
+  return `Powered by <a target="_blank" href="https://lameduse.com" rel="noreferrer"><img style="padding-bottom: 3px" height="20" alt="Casdoor" src="https://assets.lameduse.net/logo/lameduse_logo_grad.png"/></a>`;
 }
 
 export function getEmptyFooterContent() {
