@@ -306,7 +306,7 @@ jobs:
           sed -i "s/appVersion: .*/appVersion: ${{ needs.tag-release.outputs.new-release-version }}/g" ./charts/casdoor/Chart.yaml
           sed -i "s/version: .*/version: ${{ needs.tag-release.outputs.new-release-version }}/g" ./charts/casdoor/Chart.yaml
 
-          REGISTRY=oci://registry.lameduse.cloud/casdoor
+          REGISTRY=oci://registry.lameduse.cloud/restricted
           cd charts/casdoor
           helm package .
           PKG_NAME=$(ls *.tgz)
