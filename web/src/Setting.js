@@ -81,9 +81,9 @@ export function getAlgorithmNames(themeData) {
 
 export function getLogo(themes) {
   if (themes.includes("dark")) {
-    return `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`;
+    return "https://assets.lameduse.net/logo/lameduse_logo_grad.svg";
   } else {
-    return `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`;
+    return "https://assets.lameduse.net/logo/lameduse_logo_grad.svg";
   }
 }
 
@@ -1937,7 +1937,7 @@ export function getUserCommonFields() {
 }
 
 export function getDefaultFooterContent() {
-  return `Powered by <a target="_blank" href="https://lameduse.com" rel="noreferrer"><img style="padding-bottom: 3px" height="20" alt="Casdoor" src="https://assets.lameduse.net/logo/lameduse_logo_grad.png"/></a>`;
+  return "Powered by <a target=\"_blank\" href=\"https://lameduse.com\" rel=\"noreferrer\"><img style=\"padding-bottom: 3px\" height=\"20\" alt=\"Casdoor\" src=\"https://assets.lameduse.net/logo/lameduse_logo_grad.png\"/></a>";
 }
 
 export function getEmptyFooterContent() {
