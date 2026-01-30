@@ -23,10 +23,10 @@ import * as Setting from "../../Setting";
 const {useToken} = theme;
 
 export const THEMES = {
-  default: `${Setting.StaticBaseUrl}/img/theme_default.svg`,
-  dark: `${Setting.StaticBaseUrl}/img/theme_dark.svg`,
-  lark: `${Setting.StaticBaseUrl}/img/theme_lark.svg`,
-  comic: `${Setting.StaticBaseUrl}/img/theme_comic.svg`,
+  default: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
+  dark: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
+  lark: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
+  comic: `https://assets.lameduse.net/logo/lameduse_logo_grad.svg`,
 };
 
 const themeTypes = {

@@ -25,12 +25,12 @@ export const DefaultLanguage = "en";
 export const InitThemeAlgorithm = true;
 export const ThemeDefault = {
   themeType: "default",
-  colorPrimary: "#5734d3",
+  colorPrimary: "#1B1464",
   borderRadius: 6,
   isCompact: false,
 };
 
-export const CustomFooter = null;
+export const CustomFooter = "© 2026 LaMeDuSe Group. All Rights Reserved.";
 
 // Blank or null to hide Ai Assistant button
 export const AiAssistantUrl = "https://ai.casbin.com";
