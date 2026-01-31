@@ -115,11 +115,11 @@ const sideTemplate = `<style>
   }
 </style>
 <div class="left-model">
-  <span class="side-logo"> <img src="${Setting.StaticBaseUrl}/img/casdoor-logo_1185x256.png" alt="Casdoor" style="width: 120px">
+  <span class="side-logo"> <img src="https://assets.lameduse.net/logo/lameduse_logo_grad.png" alt="LaMeDuSe" style="width: 120px">
     <span>SSO</span>
   </span>
   <div class="img">
-    <img src="${Setting.StaticBaseUrl}/img/casbin.svg" alt="Casdoor"/>
+    <img src="https://assets.lameduse.net/logo/lameduse_logo_grad.png" alt="LaMeDuSe"/>
   </div>
 </div>
 `;

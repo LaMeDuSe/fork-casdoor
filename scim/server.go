@@ -46,7 +46,7 @@ Example JSON user resource
     ],
     "photos": [
         {
-            "value": "https://cdn.casbin.org/img/casbin.svg"
+            "value": "https://assets.lameduse.net/logo/lameduse_logo_grad.svg"
         }
     ],
     "emails": [
