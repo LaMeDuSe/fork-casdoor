@@ -1,5 +1,4 @@
 import React from "react";
-import * as Setting from "./Setting";
 
 export const TourObj = {
   home: [

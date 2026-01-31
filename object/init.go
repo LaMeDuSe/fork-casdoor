@@ -16,10 +16,8 @@ package object
 
 import (
 	"encoding/gob"
-	"fmt"
 	"os"
 
-	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/util"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -106,11 +104,11 @@ func initBuiltInOrganization() bool {
 		CreatedTime:        util.GetCurrentTime(),
 		DisplayName:        "Built-in Organization",
 		WebsiteUrl:         "https://example.com",
-		Favicon:            fmt.Sprintf("%s/img/casbin/favicon.ico", conf.GetConfigString("staticBaseUrl")),
+		Favicon:            "https://assets.lameduse.net/logo/lameduse_logo_grad.png",
 		PasswordType:       "bcrypt",
 		PasswordOptions:    []string{"AtLeast6"},
 		CountryCodes:       []string{"US", "ES", "FR", "DE", "GB", "CN", "JP", "KR", "VN", "ID", "SG", "IN"},
-		DefaultAvatar:      fmt.Sprintf("%s/img/casbin.svg", conf.GetConfigString("staticBaseUrl")),
+		DefaultAvatar:      "https://assets.lameduse.net/logo/lameduse_logo_grad.png",
 		UserTypes:          []string{},
 		Tags:               []string{},
 		Languages:          []string{"en", "es", "fr", "de", "ja", "zh", "vi", "pt", "tr", "pl", "uk"},
@@ -146,7 +144,7 @@ func initBuiltInUser() {
 		Type:              "normal-user",
 		Password:          "123",
 		DisplayName:       "Admin",
-		Avatar:            fmt.Sprintf("%s/img/casbin.svg", conf.GetConfigString("staticBaseUrl")),
+		Avatar:            "https://assets.lameduse.net/logo/lameduse_logo_grad.png",
 		Email:             "admin@example.com",
 		Phone:             "12345678910",
 		CountryCode:       "US",
@@ -186,7 +184,7 @@ func initBuiltInApplication() {
 		CreatedTime:    util.GetCurrentTime(),
 		DisplayName:    "LaMeDuSe Auth",
 		Logo:           "https://assets.lameduse.net/logo/lameduse_logo_grad.png",
-		HomepageUrl:    "https://casdoor.org",
+		HomepageUrl:    "https://lameduse.net",
 		Organization:   "built-in",
 		Cert:           "cert-built-in",
 		EnablePassword: true,

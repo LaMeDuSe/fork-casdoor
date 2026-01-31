@@ -29,8 +29,6 @@
     "semi": ["error", "always"],
     "indent": ["error", 2],
     // follow antd's style guide
-    "quotes": ["error", "double"],
-    "jsx-quotes": ["error", "prefer-double"],
     "space-in-parens": ["error", "never"],
     "object-curly-spacing": ["error", "never"],
     "array-bracket-spacing": ["error", "never"],
