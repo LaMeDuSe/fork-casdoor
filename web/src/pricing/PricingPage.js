@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import React from "react";
-import {Card, Col, Radio, Row} from "antd";
+import {Radio, Row} from "antd";
 import * as PricingBackend from "../backend/PricingBackend";
 import * as PlanBackend from "../backend/PlanBackend";
 import CustomGithubCorner from "../common/CustomGithubCorner";
@@ -116,22 +116,43 @@ class PricingPage extends React.Component {
       return null;
     }
     return (
-      <Radio.Group
-        value={this.state.selectedPeriod}
-        size="large"
-        buttonStyle="solid"
-        onChange={e => {
-          this.setState({selectedPeriod: e.target.value});
-        }}
-      >
-        {
-          this.state.periods.map(period => {
-            return (
-              <Radio.Button key={period} value={period}>{period}</Radio.Button>
-            );
-          })
-        }
-      </Radio.Group>
+      <div style={{
+        display: "inline-flex",
+        background: "#f5f5f5",
+        borderRadius: "12px",
+        padding: "4px",
+      }}>
+        <Radio.Group
+          value={this.state.selectedPeriod}
+          size="large"
+          buttonStyle="solid"
+          onChange={e => {
+            this.setState({selectedPeriod: e.target.value});
+          }}
+          style={{display: "flex"}}
+        >
+          {
+            this.state.periods.map(period => {
+              return (
+                <Radio.Button
+                  key={period}
+                  value={period}
+                  style={{
+                    borderRadius: "10px",
+                    border: "none",
+                    fontWeight: 600,
+                    height: "40px",
+                    lineHeight: "40px",
+                    padding: "0 24px",
+                  }}
+                >
+                  {period}
+                </Radio.Button>
+              );
+            })
+          }
+        </Radio.Group>
+      </div>
     );
   }
 
@@ -149,33 +170,28 @@ class PricingPage extends React.Component {
       }
     };
 
-    if (Setting.isMobile()) {
-      return (
-        <Card style={{border: "none"}} styles={{body: {padding: 0}}}>
-          {
-            this.state.plans.map(item => {
-              return item.period === this.state.selectedPeriod ? (
-                <SingleCard link={getUrlByPlan(item.name)} key={item.name} plan={item} isSingle={this.state.plans.length === 1} />
-              ) : null;
-            })
-          }
-        </Card>
-      );
-    } else {
-      return (
-        <div style={{marginRight: "15px", marginLeft: "15px"}}>
-          <Row style={{justifyContent: "center"}} gutter={24}>
-            {
-              this.state.plans.map(item => {
-                return item.period === this.state.selectedPeriod ? (
-                  <SingleCard style={{marginRight: "5px", marginLeft: "5px"}} link={getUrlByPlan(item.name)} key={item.name} plan={item} isSingle={this.state.plans.length === 1} />
-                ) : null;
-              })
-            }
-          </Row>
-        </div>
-      );
-    }
+    const filteredPlans = this.state.plans.filter(item => item.period === this.state.selectedPeriod);
+
+    return (
+      <Row
+        style={{
+          justifyContent: "center",
+          width: "100%",
+          maxWidth: "1200px",
+          margin: "0 auto",
+        }}
+        gutter={[0, 0]}
+      >
+        {filteredPlans.map(item => (
+          <SingleCard
+            link={getUrlByPlan(item.name)}
+            key={item.name}
+            plan={item}
+            isSingle={filteredPlans.length === 1}
+          />
+        ))}
+      </Row>
+    );
   }
 
   render() {
@@ -188,32 +204,72 @@ class PricingPage extends React.Component {
     return (
       <React.Fragment>
         <CustomGithubCorner />
-        <div className="login-content">
-          <div className="login-panel">
-            <div className="login-form">
-              <h1 style={{fontSize: "48px", marginTop: "0px", marginBottom: "15px"}}>{pricing.displayName}</h1>
-              <span style={{fontSize: "20px"}}>{pricing.description}</span>
-              <Row style={{width: "100%", marginTop: "40px"}}>
-                <Col span={24} style={{display: "flex", justifyContent: "center"}} >
-                  {
-                    this.renderSelectPeriod()
-                  }
-                </Col>
-              </Row>
-              <Row style={{width: "100%", marginTop: "40px"}}>
-                <Col span={24} style={{display: "flex", justifyContent: "center"}} >
-                  {
-                    this.renderCards()
-                  }
-                </Col>
-              </Row>
-              <Row style={{justifyContent: "center"}}>
-                {pricing && pricing.trialDuration > 0
-                  ? <i>{i18next.t("pricing:Free")} {pricing.trialDuration}-{i18next.t("pricing:days trial available!")}</i>
-                  : null}
-              </Row>
-            </div>
+        <div style={{
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: Setting.isMobile() ? "40px 16px" : "60px 24px",
+          background: "linear-gradient(180deg, #f8f9fc 0%, #ffffff 50%)",
+        }}>
+          {/* Header section */}
+          <div style={{
+            textAlign: "center",
+            maxWidth: "700px",
+            marginBottom: "48px",
+          }}>
+            <h1 style={{
+              fontSize: Setting.isMobile() ? "32px" : "48px",
+              fontWeight: 800,
+              color: "#1B1464",
+              marginTop: 0,
+              marginBottom: "16px",
+              letterSpacing: "-0.5px",
+              lineHeight: 1.15,
+            }}>
+              {pricing.displayName}
+            </h1>
+            {pricing.description && (
+              <p style={{
+                fontSize: Setting.isMobile() ? "16px" : "18px",
+                color: "#6b7280",
+                lineHeight: 1.6,
+                margin: 0,
+              }}>
+                {pricing.description}
+              </p>
+            )}
           </div>
+
+          {/* Period toggle */}
+          {this.state.periods && this.state.periods.length > 1 && (
+            <div style={{marginBottom: "40px"}}>
+              {this.renderSelectPeriod()}
+            </div>
+          )}
+
+          {/* Plan cards */}
+          <div style={{
+            width: "100%",
+            maxWidth: "1200px",
+          }}>
+            {this.renderCards()}
+          </div>
+
+          {/* Trial info */}
+          {pricing && pricing.trialDuration > 0 && (
+            <div style={{
+              marginTop: "32px",
+              padding: "12px 24px",
+              background: "rgba(0, 128, 226, 0.08)",
+              borderRadius: "8px",
+              color: "#0080E2",
+              fontSize: "15px",
+              fontWeight: 500,
+            }}>
+              {i18next.t("pricing:Free")} {pricing.trialDuration}-{i18next.t("pricing:days trial available!")}
+            </div>
+          )}
         </div>
       </React.Fragment>
     );
