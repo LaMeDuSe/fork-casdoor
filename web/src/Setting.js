@@ -221,7 +221,7 @@ export const OtherProviderInfo = {
       url: "https://www.synology.com/en-global/dsm/feature/file_sharing",
     },
     "Casdoor": {
-      logo: `${StaticBaseUrl}/img/casdoor.png`,
+      logo: "https://assets.lameduse.net/logo/lameduse_logo_grad_text_primary_bg_white.png",
       url: "https://casdoor.org/docs/provider/storage/overview",
     },
     "CUCloud OSS": {
@@ -1941,7 +1941,7 @@ export function getUserCommonFields() {
 }
 
 export function getDefaultFooterContent() {
-  return "Powered by <a target=\"_blank\" href=\"https://lameduse.com\" rel=\"noreferrer\"><img style=\"padding-bottom: 3px\" height=\"20\" alt=\"Casdoor\" src=\"https://assets.lameduse.net/logo/lameduse_logo_grad.png\"/></a>";
+  return "Powered by <a target=\"_blank\" href=\"https://lameduse.com\" rel=\"noreferrer\"><img style=\"padding-bottom: 3px\" height=\"20\" alt=\"Lameduse\" src=\"https://assets.lameduse.net/logo/lameduse_logo_grad_text_primary_bg_white.png\"/></a>";
 }
 
 export function getEmptyFooterContent() {
@@ -2016,9 +2016,9 @@ export function getDefaultInvitationHtmlEmailContent() {
 <div class="email-container">
   <div class="header">
         <h3>Casbin Organization</h3>
-        <img src="https://assets.lameduse.net/logo/lameduse_logo_grad.png" alt="Casdoor Logo" width="300">
+        <img src="https://assets.lameduse.net/logo/lameduse_logo_grad_text_primary_bg_white.png" alt="Lameduse Logo" width="300">
     </div>
-    <p>You have been invited into Casdoor</p>
+    <p>You have been invited into Lameduse</p>
     <div class="code">
         %code
     </div>
