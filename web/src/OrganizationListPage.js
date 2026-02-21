@@ -17,7 +17,7 @@ import {Link} from "react-router-dom";
 import {Button, Switch, Table} from "antd";
 import moment from "moment";
 import * as Setting from "./Setting";
-import {Logos, BrandUrl} from "./LameduseTheme";
+import {BrandUrl, Logos} from "./LameduseTheme";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import i18next from "i18next";
 import BaseListPage from "./BaseListPage";

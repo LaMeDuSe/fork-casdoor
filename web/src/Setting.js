@@ -23,7 +23,7 @@ import copy from "copy-to-clipboard";
 import {authConfig} from "./auth/Auth";
 import {Helmet} from "react-helmet";
 import * as Conf from "./Conf";
-import {Logos, BrandName, BrandOrg, BrandTeam, BrandGroup, BrandUrl} from "./LameduseTheme";
+import {BrandGroup, BrandName, BrandOrg, BrandTeam, BrandUrl, Logos} from "./LameduseTheme";
 import * as phoneNumber from "libphonenumber-js";
 import moment from "moment";
 import {MfaAuthVerifyForm, NextMfa, RequiredMfa} from "./auth/mfa/MfaAuthVerifyForm";

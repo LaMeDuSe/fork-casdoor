@@ -36,7 +36,7 @@ import {CopyOutlined, HolderOutlined, LinkOutlined, UploadOutlined, UsergroupAdd
 import * as ApplicationBackend from "./backend/ApplicationBackend";
 import * as CertBackend from "./backend/CertBackend";
 import * as Setting from "./Setting";
-import {Logos, BrandName} from "./LameduseTheme";
+import {BrandName, Logos} from "./LameduseTheme";
 import * as Conf from "./Conf";
 import * as ProviderBackend from "./backend/ProviderBackend";
 import * as OrganizationBackend from "./backend/OrganizationBackend";

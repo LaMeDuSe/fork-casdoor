@@ -18,7 +18,7 @@ import * as PricingBackend from "../backend/PricingBackend";
 import * as OrderBackend from "../backend/OrderBackend";
 import * as UserBackend from "../backend/UserBackend";
 import * as Setting from "../Setting";
-import {Colors, pageBackground, headerGradient, primaryButton, outlinedButton, sectionCard} from "../LameduseTheme";
+import {Colors, headerGradient, outlinedButton, pageBackground, primaryButton, sectionCard} from "../LameduseTheme";
 import {FloatingCartButton, QuantityStepper} from "../common/product/CartControls";
 
 class ProductBuyPage extends React.Component {

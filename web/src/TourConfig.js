@@ -1,5 +1,5 @@
 import React from "react";
-import {Logos, BrandName, BrandUrl} from "./LameduseTheme";
+import {BrandName, BrandUrl, Logos} from "./LameduseTheme";
 
 export const TourObj = {
   home: [
