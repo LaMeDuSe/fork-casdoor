@@ -4,6 +4,7 @@ import copy from "copy-to-clipboard";
 import i18next from "i18next";
 import React from "react";
 import * as Setting from "../../Setting";
+import {Logos} from "../../LameduseTheme";
 
 export const MfaVerifyTotpForm = ({mfaProps, onFinish}) => {
   const [form] = Form.useForm();
@@ -19,7 +20,7 @@ export const MfaVerifyTotpForm = ({mfaProps, onFinish}) => {
           <QRCode
             errorLevel="H"
             value={mfaProps.url}
-            icon={"https://assets.lameduse.net/logo/lameduse_logo_grad.png"}
+            icon={Logos.gradPng}
           />
         </Col>
         <p style={{textAlign: "center"}}>{i18next.t("mfa:Scan the QR code with your Authenticator App")}</p>

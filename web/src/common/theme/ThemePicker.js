@@ -18,14 +18,15 @@ import {css} from "@emotion/react";
 import {Space, theme} from "antd";
 import * as React from "react";
 import i18next from "i18next";
+import {Logos} from "../../LameduseTheme";
 
 const {useToken} = theme;
 
 export const THEMES = {
-  default: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
-  dark: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
-  lark: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
-  comic: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
+  default: Logos.gradSvg,
+  dark: Logos.gradSvg,
+  lark: Logos.gradSvg,
+  comic: Logos.gradSvg,
 };
 
 const themeTypes = {

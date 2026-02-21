@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import * as Setting from "./Setting";
+import {BrandUrl} from "./LameduseTheme";
 import {Avatar, Button, Card, Drawer, Dropdown, Menu, Result, Tooltip} from "antd";
 import EnableMfaNotification from "./common/notifaction/EnableMfaNotification";
 import {Link, Redirect, Route, Switch, withRouter} from "react-router-dom";
@@ -63,7 +64,7 @@ import TokenEditPage from "./TokenEditPage";
 import ProductListPage from "./ProductListPage";
 import ProductStorePage from "./ProductStorePage";
 import ProductEditPage from "./ProductEditPage";
-import ProductBuyPage from "./ProductBuyPage";
+import ProductBuyPage from "./lameduse/ProductBuyPage";
 import CartListPage from "./CartListPage";
 import OrderListPage from "./OrderListPage";
 import OrderEditPage from "./OrderEditPage";
@@ -304,7 +305,7 @@ function ManagementPage(props) {
     ]));
 
     if (Setting.isLocalAdminUser(props.account) && Conf.ShowGithubCorner) {
-      res.push(Setting.getItem(<a href={"https://lameduse.com"}>
+      res.push(Setting.getItem(<a href={BrandUrl}>
         <span style={{fontWeight: "bold", backgroundColor: "rgba(87,52,211,0.4)", marginTop: "12px", paddingLeft: "5px", paddingRight: "5px", display: "flex", alignItems: "center", height: "40px", borderRadius: "5px"}}>
           🚀 SaaS Hosting 🔥
         </span>

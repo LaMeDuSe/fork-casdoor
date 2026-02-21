@@ -19,7 +19,7 @@ import * as Setting from "./Setting";
 import i18next from "i18next";
 import {LinkOutlined} from "@ant-design/icons";
 import * as ProviderBackend from "./backend/ProviderBackend";
-import ProductBuyPage from "./ProductBuyPage";
+import ProductBuyPage from "./lameduse/ProductBuyPage";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 
 const {Option} = Select;

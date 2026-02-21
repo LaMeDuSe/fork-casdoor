@@ -18,6 +18,7 @@ import {Button, Col, List, Row, Table, Tooltip} from "antd";
 import {EditOutlined} from "@ant-design/icons";
 import moment from "moment";
 import * as Setting from "./Setting";
+import {Logos} from "./LameduseTheme";
 import * as ApplicationBackend from "./backend/ApplicationBackend";
 import i18next from "i18next";
 import BaseListPage from "./BaseListPage";
@@ -38,7 +39,7 @@ class ApplicationListPage extends BaseListPage {
       organization: organizationName,
       createdTime: moment().format(),
       displayName: `New Application - ${randomName}`,
-      logo: `https://assets.lameduse.net/logo/lameduse_logo_grad.png`,
+      logo: Logos.gradPng,
       enablePassword: true,
       enableSignUp: true,
       disableSignin: false,

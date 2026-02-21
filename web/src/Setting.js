@@ -23,6 +23,7 @@ import copy from "copy-to-clipboard";
 import {authConfig} from "./auth/Auth";
 import {Helmet} from "react-helmet";
 import * as Conf from "./Conf";
+import {Logos, BrandName, BrandOrg, BrandTeam, BrandGroup, BrandUrl} from "./LameduseTheme";
 import * as phoneNumber from "libphonenumber-js";
 import moment from "moment";
 import {MfaAuthVerifyForm, NextMfa, RequiredMfa} from "./auth/mfa/MfaAuthVerifyForm";
@@ -84,9 +85,9 @@ export function getAlgorithmNames(themeData) {
 
 export function getLogo(themes) {
   if (themes.includes("dark")) {
-    return "https://assets.lameduse.net/logo/lameduse_logo_grad.svg";
+    return Logos.gradSvg;
   } else {
-    return "https://assets.lameduse.net/logo/lameduse_logo_grad.svg";
+    return Logos.gradSvg;
   }
 }
 
@@ -221,7 +222,7 @@ export const OtherProviderInfo = {
       url: "https://www.synology.com/en-global/dsm/feature/file_sharing",
     },
     "Casdoor": {
-      logo: "https://assets.lameduse.net/logo/lameduse_logo_grad_text_primary_bg_white.png",
+      logo: Logos.fullWhite,
       url: "https://casdoor.org/docs/provider/storage/overview",
     },
     "CUCloud OSS": {
@@ -1941,7 +1942,7 @@ export function getUserCommonFields() {
 }
 
 export function getDefaultFooterContent() {
-  return "Powered by <a target=\"_blank\" href=\"https://lameduse.com\" rel=\"noreferrer\"><img style=\"padding-bottom: 3px\" height=\"20\" alt=\"Lameduse\" src=\"https://assets.lameduse.net/logo/lameduse_logo_grad_text_primary_bg_white.png\"/></a>";
+  return `Powered by <a target="_blank" href="${BrandUrl}" rel="noreferrer"><img style="padding-bottom: 3px" height="20" alt="${BrandName}" src="${Logos.fullWhite}"/></a>`;
 }
 
 export function getEmptyFooterContent() {
@@ -1972,8 +1973,8 @@ export function getDefaultHtmlEmailContent() {
 <body>
 <div class="email-container">
   <div class="header">
-        <h3>Casbin Organization</h3>
-        <img src="https://assets.lameduse.net/logo/lameduse_logo_grad.png" alt="LaMeDuSe Logo" width="300">
+        <h3>${BrandOrg}</h3>
+        <img src="${Logos.gradPng}" alt="${BrandName} Logo" width="300">
     </div>
     <p><strong>%{user.friendlyName}</strong>, here is your verification code</p>
     <p>Use this code for your transaction. It's valid for 5 minutes</p>
@@ -1986,10 +1987,10 @@ export function getDefaultHtmlEmailContent() {
       </div>
     </reset-link>
     <p>Thanks</p>
-    <p>Casbin Team</p>
+    <p>${BrandTeam}</p>
     <hr>
     <div class="footer">
-        <p>LaMeDuSe Group <a href="https://lameduse.com">https://lameduse.com</a></p>
+        <p>${BrandGroup} <a href="${BrandUrl}">${BrandUrl}</a></p>
     </div>
 </div>
 </body>
@@ -2015,10 +2016,10 @@ export function getDefaultInvitationHtmlEmailContent() {
 <body>
 <div class="email-container">
   <div class="header">
-        <h3>Casbin Organization</h3>
-        <img src="https://assets.lameduse.net/logo/lameduse_logo_grad_text_primary_bg_white.png" alt="Lameduse Logo" width="300">
+        <h3>${BrandOrg}</h3>
+        <img src="${Logos.fullWhite}" alt="${BrandName} Logo" width="300">
     </div>
-    <p>You have been invited into Lameduse</p>
+    <p>You have been invited into ${BrandName}</p>
     <div class="code">
         %code
     </div>
@@ -2028,10 +2029,10 @@ export function getDefaultInvitationHtmlEmailContent() {
       </div>
     </reset-link>
     <p>Thanks</p>
-    <p>Casbin Team</p>
+    <p>${BrandTeam}</p>
     <hr>
     <div class="footer">
-        <p>LaMeDuSe Group <a href="https://lameduse.com">https://lameduse.com</a></p>
+        <p>${BrandGroup} <a href="${BrandUrl}">${BrandUrl}</a></p>
     </div>
 </div>
 </body>

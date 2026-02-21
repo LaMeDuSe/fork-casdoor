@@ -16,6 +16,7 @@ import React, {Component, Suspense, lazy} from "react";
 import "./App.less";
 import {Helmet} from "react-helmet";
 import * as Setting from "./Setting";
+import {Logos, BrandName, BrandUrl} from "./LameduseTheme";
 import {setOrgIsTourVisible, setTourLogo} from "./TourConfig";
 import {StyleProvider, legacyLogicalPropertiesTransformer} from "@ant-design/cssinjs";
 import {GithubOutlined, InfoCircleFilled, ShareAltOutlined} from "@ant-design/icons";
@@ -487,7 +488,7 @@ class App extends Component {
               : (
                 Conf.CustomFooter !== null ? Conf.CustomFooter : (
                   <React.Fragment>
-                  Powered by <a target="_blank" href="https://lameduse.com" rel="noreferrer"><img style={{paddingBottom: "3px"}} height={"20px"} alt={"LaMeDuSe"} src={logo} /></a>
+                  Powered by <a target="_blank" href={BrandUrl} rel="noreferrer"><img style={{paddingBottom: "3px"}} height={"20px"} alt={BrandName} src={logo} /></a>
                   </React.Fragment>
                 )
               )
@@ -503,8 +504,8 @@ class App extends Component {
         title={
           <React.Fragment>
             <Tooltip title="Want to deploy your own AI assistant? Click to learn more!">
-              <a target="_blank" rel="noreferrer" href={"https://lameduse.com"}>
-                <img style={{width: "20px", marginRight: "10px", marginBottom: "2px"}} alt="help" src="https://assets.lameduse.net/logo/lameduse_logo_grad.svg" />
+              <a target="_blank" rel="noreferrer" href={BrandUrl}>
+                <img style={{width: "20px", marginRight: "10px", marginBottom: "2px"}} alt="help" src={Logos.gradSvg} />
                 AI Assistant
               </a>
             </Tooltip>
@@ -722,7 +723,7 @@ class App extends Component {
       <React.Fragment>
         {(this.state.account === undefined || this.state.account === null) ?
           <Helmet>
-            <link rel="icon" href={"https://assets.lameduse.net/logo/lameduse_logo_grad.svg"} />
+            <link rel="icon" href={Logos.gradSvg} />
           </Helmet> :
           <Helmet>
             <title>{this.state.account.organization?.displayName}</title>

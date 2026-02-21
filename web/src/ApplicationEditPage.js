@@ -36,6 +36,7 @@ import {CopyOutlined, HolderOutlined, LinkOutlined, UploadOutlined, UsergroupAdd
 import * as ApplicationBackend from "./backend/ApplicationBackend";
 import * as CertBackend from "./backend/CertBackend";
 import * as Setting from "./Setting";
+import {Logos, BrandName} from "./LameduseTheme";
 import * as Conf from "./Conf";
 import * as ProviderBackend from "./backend/ProviderBackend";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
@@ -116,11 +117,11 @@ const sideTemplate = `<style>
   }
 </style>
 <div class="left-model">
-  <span class="side-logo"> <img src="https://assets.lameduse.net/logo/lameduse_logo_grad.png" alt="LaMeDuSe" style="width: 120px">
+  <span class="side-logo"> <img src="${Logos.gradPng}" alt="${BrandName}" style="width: 120px">
     <span>SSO</span>
   </span>
   <div class="img">
-    <img src="https://assets.lameduse.net/logo/lameduse_logo_grad.png" alt="LaMeDuSe"/>
+    <img src="${Logos.gradPng}" alt="${BrandName}"/>
   </div>
 </div>
 `;

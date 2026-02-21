@@ -18,6 +18,7 @@ import {LinkOutlined} from "@ant-design/icons";
 import * as WebhookBackend from "./backend/WebhookBackend";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import * as Setting from "./Setting";
+import {Logos} from "./LameduseTheme";
 import i18next from "i18next";
 import WebhookHeaderTable from "./table/WebhookHeaderTable";
 
@@ -31,7 +32,7 @@ const applicationTemplate = {
   organization: "built-in",
   createdTime: "2022-01-01T01:03:42+08:00",
   displayName: "New Application - 123",
-  logo: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
+  logo: Logos.gradSvg,
   enablePassword: true,
   enableSignUp: true,
   disableSignin: false,
@@ -66,8 +67,8 @@ const userTemplate = {
   "password": "***",
   "passwordSalt": "",
   "displayName": "Admin",
-  "avatar": "https://assets.lameduse.net/logo/lameduse_logo_grad.png",
-  "permanentAvatar": "https://assets.lameduse.net/logo/lameduse_logo_grad.png",
+  "avatar": Logos.gradPng,
+  "permanentAvatar": Logos.gradPng,
   "email": "admin@example.com",
   "phone": "",
   "location": "",

@@ -187,8 +187,8 @@ func serveFileWithReplace(w http.ResponseWriter, r *http.Request, name string, o
 	oldContent := util.ReadStringFromPath(name)
 	newContent := oldContent
 	if organizationThemeCookie != nil {
-		newContent = strings.ReplaceAll(newContent, "https://assets.lameduse.net/logo/lameduse_logo_grad.png", organizationThemeCookie.Favicon)
-		newContent = strings.ReplaceAll(newContent, "<title>Lameduse</title>", fmt.Sprintf("<title>%s</title>", organizationThemeCookie.DisplayName))
+		newContent = strings.ReplaceAll(newContent, util.BrandLogoGradPng, organizationThemeCookie.Favicon)
+		newContent = strings.ReplaceAll(newContent, "<title>"+util.BrandName+"</title>", fmt.Sprintf("<title>%s</title>", organizationThemeCookie.DisplayName))
 	}
 
 	newContent = strings.ReplaceAll(newContent, oldStaticBaseUrl, newStaticBaseUrl)

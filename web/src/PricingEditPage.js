@@ -20,7 +20,7 @@ import * as ApplicationBackend from "./backend/ApplicationBackend";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import * as PricingBackend from "./backend/PricingBackend";
 import * as PlanBackend from "./backend/PlanBackend";
-import PricingPage from "./pricing/PricingPage";
+import PricingPage from "./lameduse/PricingPage";
 import * as Setting from "./Setting";
 import i18next from "i18next";
 

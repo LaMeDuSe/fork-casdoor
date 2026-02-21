@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {Copyright} from "./LameduseTheme";
+
 export const DefaultApplication = "app-built-in";
 
 export const CasvisorUrl = "";
@@ -30,7 +32,7 @@ export const ThemeDefault = {
   isCompact: false,
 };
 
-export const CustomFooter = "© 2026 LaMeDuSe Group. All Rights Reserved.";
+export const CustomFooter = Copyright;
 
 // Blank or null to hide Ai Assistant button
 export const AiAssistantUrl = "https://ai.casbin.com";

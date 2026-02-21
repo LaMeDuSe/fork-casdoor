@@ -17,6 +17,7 @@ import {Link} from "react-router-dom";
 import {Button, Switch, Table} from "antd";
 import moment from "moment";
 import * as Setting from "./Setting";
+import {Logos, BrandUrl} from "./LameduseTheme";
 import * as OrganizationBackend from "./backend/OrganizationBackend";
 import i18next from "i18next";
 import BaseListPage from "./BaseListPage";
@@ -31,8 +32,8 @@ class OrganizationListPage extends BaseListPage {
       name: `organization_${randomName}`,
       createdTime: moment().format(),
       displayName: `New Organization - ${randomName}`,
-      websiteUrl: "https://lameduse.com",
-      favicon: "https://assets.lameduse.net/logo/lameduse_logo_grad.png",
+      websiteUrl: BrandUrl,
+      favicon: Logos.gradPng,
       passwordType: "bcrypt",
       PasswordSalt: "",
       passwordOptions: ["AtLeast6"],
@@ -40,7 +41,7 @@ class OrganizationListPage extends BaseListPage {
       passwordObfuscatorKey: "",
       passwordExpireDays: 0,
       countryCodes: ["US"],
-      defaultAvatar: "https://assets.lameduse.net/logo/lameduse_logo_grad.svg",
+      defaultAvatar: Logos.gradSvg,
       defaultApplication: "",
       tags: [],
       languages: Setting.Countries.map(item => item.key),
