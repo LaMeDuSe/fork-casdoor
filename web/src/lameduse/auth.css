@@ -41,9 +41,19 @@
   z-index: 1;
 }
 
+/* ── "Continue with" / Signed-In Box ─────────────────────────── */
+/* The SelfLoginButton (react-social-login-buttons) expands to   */
+/* full width by default. Constrain it to match the form width.  */
+.lameduse-auth .login-form button {
+  max-width: 320px;
+}
+
 /* ── Form Area ───────────────────────────────────────────────── */
 .lameduse-auth .login-form {
   padding: 44px 40px 36px;
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 @media screen and (max-width: 600px) {
