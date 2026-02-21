@@ -1,0 +1,265 @@
+/* ================================================================
+   Lameduse Auth Theme – Login / Signup Page Overrides
+   ================================================================
+   Scoped under .lameduse-auth so styles only apply when the
+   wrapper component is used.  All rules target existing Casdoor
+   CSS classes — no new markup is required inside the components.
+   ================================================================ */
+
+/* ── Wrapper ─────────────────────────────────────────────────── */
+.lameduse-auth {
+  width: 100%;
+}
+
+/* ── Panel Card ──────────────────────────────────────────────── */
+.lameduse-auth .login-panel,
+.lameduse-auth .login-panel-dark {
+  border-radius: 20px;
+  box-shadow:
+    0 20px 60px rgba(27, 20, 100, 0.10),
+    0 4px 16px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(27, 20, 100, 0.06);
+  overflow: hidden;
+  margin-top: 40px;
+  margin-bottom: 40px;
+}
+
+.lameduse-auth .login-panel-dark {
+  background-color: #141428;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Side Image Panel ────────────────────────────────────────── */
+.lameduse-auth .side-image {
+  background: linear-gradient(150deg, #1B1464 0%, #0080E2 55%, #01B4B6 100%);
+  border-right: none !important;
+}
+
+/* Give the side HTML a glass-morphism overlay */
+.lameduse-auth .side-image > div {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Form Area ───────────────────────────────────────────────── */
+.lameduse-auth .login-form {
+  padding: 44px 40px 36px;
+}
+
+@media screen and (max-width: 600px) {
+  .lameduse-auth .login-form {
+    padding: 28px 20px 24px;
+  }
+}
+
+/* ── Logo ─────────────────────────────────────────────────────── */
+.lameduse-auth .login-logo-box {
+  margin-bottom: 6px;
+}
+
+.lameduse-auth .login-logo-box .panel-logo {
+  margin-bottom: 20px;
+}
+
+/* ── Input Fields ─────────────────────────────────────────────── */
+.lameduse-auth .ant-input,
+.lameduse-auth .ant-input-password,
+.lameduse-auth .ant-input-affix-wrapper {
+  border-radius: 10px;
+  border: 1.5px solid #dfe2ea;
+  transition: all 0.25s ease;
+}
+
+.lameduse-auth .ant-input-affix-wrapper {
+  padding: 7px 14px;
+}
+
+.lameduse-auth .ant-input:hover,
+.lameduse-auth .ant-input-affix-wrapper:hover {
+  border-color: #0080E2;
+}
+
+.lameduse-auth .ant-input:focus,
+.lameduse-auth .ant-input-focused,
+.lameduse-auth .ant-input-affix-wrapper:focus,
+.lameduse-auth .ant-input-affix-wrapper-focused {
+  border-color: #0080E2;
+  box-shadow: 0 0 0 3px rgba(0, 128, 226, 0.10);
+}
+
+.lameduse-auth .ant-input-password:focus-within {
+  border-color: #0080E2;
+  box-shadow: 0 0 0 3px rgba(0, 128, 226, 0.10);
+}
+
+/* ── Login / Signup Submit Buttons ─────────────────────────────── */
+.lameduse-auth .login-button,
+.lameduse-auth .signup-button {
+  width: 100%;
+  height: 46px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1B1464 0%, #0080E2 100%) !important;
+  border: none !important;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.3px;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 14px rgba(27, 20, 100, 0.22);
+}
+
+.lameduse-auth .login-button:hover,
+.lameduse-auth .login-button:focus,
+.lameduse-auth .signup-button:hover,
+.lameduse-auth .signup-button:focus {
+  background: linear-gradient(135deg, #150f52 0%, #006bc4 100%) !important;
+  box-shadow: 0 6px 22px rgba(27, 20, 100, 0.32);
+  transform: translateY(-1px);
+}
+
+.lameduse-auth .login-button:active,
+.lameduse-auth .signup-button:active {
+  transform: translateY(0);
+  box-shadow: 0 3px 10px rgba(27, 20, 100, 0.20);
+}
+
+/* ── Forgot Password & Footer Links ──────────────────────────── */
+.lameduse-auth .login-forget-password a,
+.lameduse-auth .login-signup-link a,
+.lameduse-auth .signup-link {
+  color: #0080E2;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.lameduse-auth .login-forget-password a:hover,
+.lameduse-auth .login-signup-link a:hover,
+.lameduse-auth .signup-link:hover {
+  color: #1B1464;
+}
+
+/* ── Login Method Tabs ───────────────────────────────────────── */
+.lameduse-auth .signin-methods .ant-tabs-tab {
+  transition: color 0.2s ease;
+}
+
+.lameduse-auth .signin-methods .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #1B1464 !important;
+  font-weight: 600;
+}
+
+.lameduse-auth .signin-methods .ant-tabs-ink-bar {
+  background: linear-gradient(90deg, #1B1464, #0080E2);
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* ── Checkbox ────────────────────────────────────────────────── */
+.lameduse-auth .ant-checkbox-checked .ant-checkbox-inner {
+  background-color: #1B1464;
+  border-color: #1B1464;
+}
+
+.lameduse-auth .ant-checkbox-wrapper:hover .ant-checkbox-inner,
+.lameduse-auth .ant-checkbox:hover .ant-checkbox-inner {
+  border-color: #0080E2;
+}
+
+/* ── Form Labels ─────────────────────────────────────────────── */
+.lameduse-auth .ant-form-item-label > label {
+  font-weight: 500;
+  color: #2d2a5e;
+}
+
+/* ── Select / Dropdown ───────────────────────────────────────── */
+.lameduse-auth .ant-select .ant-select-selector {
+  border-radius: 10px !important;
+  border: 1.5px solid #dfe2ea !important;
+  transition: all 0.25s ease;
+}
+
+.lameduse-auth .ant-select:hover .ant-select-selector {
+  border-color: #0080E2 !important;
+}
+
+.lameduse-auth .ant-select-focused .ant-select-selector {
+  border-color: #0080E2 !important;
+  box-shadow: 0 0 0 3px rgba(0, 128, 226, 0.10) !important;
+}
+
+/* ── Radio Buttons (Email / Phone toggle) ────────────────────── */
+.lameduse-auth .ant-radio-button-wrapper-checked {
+  background: #1B1464 !important;
+  border-color: #1B1464 !important;
+  color: #fff !important;
+}
+
+.lameduse-auth .ant-radio-button-wrapper-checked::before {
+  background: #1B1464 !important;
+}
+
+.lameduse-auth .ant-radio-button-wrapper:hover {
+  color: #0080E2;
+}
+
+/* ── Back Button ─────────────────────────────────────────────── */
+.lameduse-auth .back-inner-button {
+  color: #1B1464;
+}
+
+.lameduse-auth .back-inner-button:hover {
+  color: #0080E2 !important;
+}
+
+/* ── Provider / Social Login Buttons ─────────────────────────── */
+.lameduse-auth .provider-img {
+  border-radius: 10px;
+  transition: all 0.2s ease;
+}
+
+.lameduse-auth .provider-img:hover {
+  transform: scale(1.06);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
+}
+
+/* ── Divider ─────────────────────────────────────────────────── */
+.lameduse-auth .ant-divider-inner-text {
+  color: #8c8c8c;
+  font-size: 13px;
+}
+
+/* ── Message / Result pages ──────────────────────────────────── */
+.lameduse-auth .ant-result-title {
+  color: #1B1464;
+}
+
+/* ── Verification Code Input ─────────────────────────────────── */
+.lameduse-auth .verification-code .ant-btn-primary,
+.lameduse-auth .signup-email-code .ant-btn-primary,
+.lameduse-auth .phone-code .ant-btn-primary {
+  border-radius: 10px;
+  background: #1B1464;
+  border-color: #1B1464;
+}
+
+.lameduse-auth .verification-code .ant-btn-primary:hover,
+.lameduse-auth .signup-email-code .ant-btn-primary:hover,
+.lameduse-auth .phone-code .ant-btn-primary:hover {
+  background: #0080E2;
+  border-color: #0080E2;
+}
+
+/* ── Language Selector ───────────────────────────────────────── */
+.lameduse-auth .login-languages .ant-dropdown-trigger {
+  color: #1B1464;
+  font-weight: 500;
+}
+
+/* ── Spin / Loading ──────────────────────────────────────────── */
+.lameduse-auth .ant-spin-dot-item {
+  background-color: #0080E2;
+}
+
+/* ── Password Strength Popover ───────────────────────────────── */
+.lameduse-auth .ant-popover .ant-progress-bg {
+  background: linear-gradient(90deg, #1B1464, #01B4B6);
+}
