@@ -1,6 +1,6 @@
 module github.com/casdoor/casdoor
 
-go 1.23.0
+go 1.24.0
 
 require (
 	github.com/Masterminds/squirrel v1.5.3
@@ -34,7 +34,7 @@ require (
 	github.com/fogleman/gg v1.3.0
 	github.com/go-asn1-ber/asn1-ber v1.5.5
 	github.com/go-git/go-git/v5 v5.16.3
-	github.com/go-jose/go-jose/v4 v4.1.2
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-ldap/ldap/v3 v3.4.6
 	github.com/go-mysql-org/go-mysql v1.7.0
 	github.com/go-pay/gopay v1.5.115
