@@ -1,6 +1,6 @@
 module github.com/casdoor/casdoor
 
-go 1.23.0
+go 1.24
 
 require (
 	github.com/Masterminds/squirrel v1.5.3
@@ -17,7 +17,7 @@ require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.63.107
 	github.com/aliyun/aliyun-oss-go-sdk v2.2.2+incompatible
 	github.com/aliyun/credentials-go v1.3.10
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.95.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
 	github.com/beego/beego/v2 v2.3.8
 	github.com/beevik/etree v1.1.0
 	github.com/casbin/casbin/v2 v2.77.2
@@ -115,7 +115,7 @@ require (
 	github.com/apistd/uni-go-sdk v0.0.2 // indirect
 	github.com/atc0005/go-teams-notify/v2 v2.13.0 // indirect
 	github.com/aws/aws-sdk-go v1.45.5 // indirect
-	github.com/aws/smithy-go v1.24.0 // indirect
+	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/baidubce/bce-sdk-go v0.9.156 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blinkbean/dingtalk v1.1.3 // indirect
