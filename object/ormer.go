@@ -314,6 +314,11 @@ func (a *Ormer) createTable() {
 		panic(err)
 	}
 
+	err = a.ensureUserEmailUnique()
+	if err != nil {
+		panic(err)
+	}
+
 	err = a.Engine.Sync2(new(Invitation))
 	if err != nil {
 		panic(err)

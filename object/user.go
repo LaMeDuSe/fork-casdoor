@@ -52,25 +52,28 @@ func InitUserManager() {
 }
 
 type User struct {
-	Owner       string `xorm:"varchar(100) notnull pk" json:"owner"`
+	Owner       string `xorm:"varchar(100) notnull pk unique(owner_email_unique)" json:"owner"`
 	Name        string `xorm:"varchar(255) notnull pk" json:"name"`
 	CreatedTime string `xorm:"varchar(100) index" json:"createdTime"`
 	UpdatedTime string `xorm:"varchar(100)" json:"updatedTime"`
 	DeletedTime string `xorm:"varchar(100)" json:"deletedTime"`
 
-	Id                   string     `xorm:"varchar(100) index" json:"id"`
-	ExternalId           string     `xorm:"varchar(100) index" json:"externalId"`
-	Type                 string     `xorm:"varchar(100)" json:"type"`
-	Password             string     `xorm:"varchar(150)" json:"password"`
-	PasswordSalt         string     `xorm:"varchar(100)" json:"passwordSalt"`
-	PasswordType         string     `xorm:"varchar(100)" json:"passwordType"`
-	DisplayName          string     `xorm:"varchar(100)" json:"displayName"`
-	FirstName            string     `xorm:"varchar(100)" json:"firstName"`
-	LastName             string     `xorm:"varchar(100)" json:"lastName"`
-	Avatar               string     `xorm:"text" json:"avatar"`
-	AvatarType           string     `xorm:"varchar(100)" json:"avatarType"`
-	PermanentAvatar      string     `xorm:"varchar(500)" json:"permanentAvatar"`
-	Email                string     `xorm:"varchar(100) index" json:"email"`
+	Id              string `xorm:"varchar(100) index" json:"id"`
+	ExternalId      string `xorm:"varchar(100) index" json:"externalId"`
+	Type            string `xorm:"varchar(100)" json:"type"`
+	Password        string `xorm:"varchar(150)" json:"password"`
+	PasswordSalt    string `xorm:"varchar(100)" json:"passwordSalt"`
+	PasswordType    string `xorm:"varchar(100)" json:"passwordType"`
+	DisplayName     string `xorm:"varchar(100)" json:"displayName"`
+	FirstName       string `xorm:"varchar(100)" json:"firstName"`
+	LastName        string `xorm:"varchar(100)" json:"lastName"`
+	Avatar          string `xorm:"text" json:"avatar"`
+	AvatarType      string `xorm:"varchar(100)" json:"avatarType"`
+	PermanentAvatar string `xorm:"varchar(500)" json:"permanentAvatar"`
+	Email           string `xorm:"varchar(100) index" json:"email"`
+	// EmailUnique is a database-generated column (NULLIF(LOWER(TRIM(email)), '')) backing the unique index
+	// on (owner, email_unique). It is read-only for xorm and never written by the application, see user_email_unique.go.
+	EmailUnique          *string    `xorm:"varchar(100) unique(owner_email_unique) <-" json:"-"`
 	EmailVerified        bool       `json:"emailVerified"`
 	Phone                string     `xorm:"varchar(100) index" json:"phone"`
 	CountryCode          string     `xorm:"varchar(6)" json:"countryCode"`
@@ -877,6 +880,15 @@ func UpdateUser(id string, user *User, columns []string, isAdmin bool) (bool, er
 		columns = append(columns, "name", "id", "email", "phone", "country_code", "type", "balance", "balance_credit", "balance_currency", "mfa_items", "register_type", "register_source")
 	}
 
+	if util.InSlice(columns, "email") {
+		user.Email = NormalizeEmail(user.Email)
+		if user.Email != NormalizeEmail(oldUser.Email) {
+			if err = CheckEmailUnique(oldUser.Owner, user.Email, oldUser.Name, "en"); err != nil {
+				return false, err
+			}
+		}
+	}
+
 	columns = append(columns, "updated_time")
 	user.UpdatedTime = util.GetCurrentTime()
 
@@ -913,7 +925,7 @@ func updateUser(id string, user *User, columns []string) (int64, error) {
 
 	affected, err := ormer.Engine.ID(core.PK{owner, name}).Cols(columns...).Update(user)
 	if err != nil {
-		return 0, err
+		return 0, wrapUserEmailUniqueError(err, "en")
 	}
 	return affected, nil
 }
@@ -931,6 +943,13 @@ func UpdateUserForAllFields(id string, user *User) (bool, error) {
 
 	if oldUser == nil {
 		return false, fmt.Errorf("the user: %s is not found", id)
+	}
+
+	user.Email = NormalizeEmail(user.Email)
+	if user.Email != NormalizeEmail(oldUser.Email) {
+		if err = CheckEmailUnique(oldUser.Owner, user.Email, oldUser.Name, "en"); err != nil {
+			return false, err
+		}
 	}
 
 	if name != user.Name {
@@ -956,7 +975,7 @@ func UpdateUserForAllFields(id string, user *User) (bool, error) {
 
 	affected, err := ormer.Engine.ID(core.PK{owner, name}).AllCols().Update(user)
 	if err != nil {
-		return false, err
+		return false, wrapUserEmailUniqueError(err, "en")
 	}
 
 	return affected != 0, nil
@@ -1001,6 +1020,11 @@ func AddUser(user *User, lang string) (bool, error) {
 		if applicationCount == 0 {
 			return false, fmt.Errorf(i18n.Translate(lang, "general:The organization: %s should have one application at least"), organization.Owner)
 		}
+	}
+
+	user.Email = NormalizeEmail(user.Email)
+	if err = CheckEmailUnique(user.Owner, user.Email, "", lang); err != nil {
+		return false, err
 	}
 
 	if organization.Name == "built-in" && !organization.HasPrivilegeConsent && user.Name != "admin" {
@@ -1073,7 +1097,7 @@ func AddUser(user *User, lang string) (bool, error) {
 
 	affected, err := ormer.Engine.Insert(user)
 	if err != nil {
-		return false, err
+		return false, wrapUserEmailUniqueError(err, lang)
 	}
 
 	return affected != 0, nil
@@ -1082,6 +1106,17 @@ func AddUser(user *User, lang string) (bool, error) {
 func AddUsers(users []*User) (bool, error) {
 	if len(users) == 0 {
 		return false, fmt.Errorf("no users are provided")
+	}
+
+	users, rejectedUsers, err := filterUsersWithUniqueEmail(users)
+	if err != nil {
+		return false, err
+	}
+	for _, user := range rejectedUsers {
+		fmt.Printf("Skip adding user: %s because email: %s already exists in the organization\n", user.GetId(), user.Email)
+	}
+	if len(users) == 0 {
+		return false, nil
 	}
 
 	isUsernameLowered := conf.GetConfigBool("isUsernameLowered")

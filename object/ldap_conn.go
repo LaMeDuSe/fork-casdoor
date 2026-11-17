@@ -402,6 +402,12 @@ func SyncLdapUsers(owner string, syncUsers []LdapUser, ldapId string) (existUser
 				newUser.Groups = []string{ldap.DefaultGroup}
 			}
 
+			if err = CheckEmailUnique(owner, newUser.Email, "", "en"); err != nil {
+				fmt.Printf("Skip syncing LDAP user: %s because email: %s already exists in the organization\n", newUser.Name, newUser.Email)
+				failedUsers = append(failedUsers, syncUser)
+				continue
+			}
+
 			affected, err := AddUser(newUser, "en")
 			if err != nil {
 				return nil, nil, err

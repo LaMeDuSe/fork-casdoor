@@ -38,6 +38,10 @@ func GetUserByField(organizationName string, field string, value string) (*User,
 		return nil, nil
 	}
 
+	if strings.ToLower(field) == "email" {
+		return getUserByEmailInOrganization(organizationName, value, "")
+	}
+
 	user := User{Owner: organizationName}
 	existed, err := ormer.Engine.Where(fmt.Sprintf("%s=?", strings.ToLower(field)), value).Get(&user)
 	if err != nil {
@@ -49,6 +53,100 @@ func GetUserByField(organizationName string, field string, value string) (*User,
 	} else {
 		return nil, nil
 	}
+}
+
+// NormalizeEmail returns the canonical form under which emails are stored and compared.
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// getUserByEmailInOrganization finds a user of the organization whose email matches case-insensitively,
+// ignoring the user named excludeName (pass "" to ignore nobody).
+func getUserByEmailInOrganization(organizationName string, email string, excludeName string) (*User, error) {
+	email = NormalizeEmail(email)
+	if organizationName == "" || email == "" {
+		return nil, nil
+	}
+
+	session := ormer.Engine.Where("owner = ? AND LOWER(email) = ?", organizationName, email)
+	if excludeName != "" {
+		session = session.And("name <> ?", excludeName)
+	}
+
+	user := User{}
+	existed, err := session.Get(&user)
+	if err != nil {
+		return nil, err
+	}
+	if !existed {
+		return nil, nil
+	}
+	return &user, nil
+}
+
+// CheckEmailUnique returns an error if another user of the organization (other than excludeName) already uses this email.
+// Empty emails are always allowed.
+func CheckEmailUnique(organizationName string, email string, excludeName string, lang string) error {
+	if NormalizeEmail(email) == "" {
+		return nil
+	}
+
+	existingUser, err := getUserByEmailInOrganization(organizationName, email, excludeName)
+	if err != nil {
+		return err
+	}
+	if existingUser != nil {
+		return fmt.Errorf(i18n.Translate(lang, "check:Email already exists"))
+	}
+	return nil
+}
+
+// filterUsersWithUniqueEmail splits users into those that can be inserted and those whose email is already used
+// in their organization (in the database or earlier in the same list).
+func filterUsersWithUniqueEmail(users []*User) ([]*User, []*User, error) {
+	owners := []string{}
+	seen := map[string]bool{}
+	for _, user := range users {
+		user.Email = NormalizeEmail(user.Email)
+		if !seen[user.Owner] {
+			seen[user.Owner] = true
+			owners = append(owners, user.Owner)
+		}
+	}
+
+	type ownerEmail struct {
+		Owner string
+		Email string
+	}
+	rows := []ownerEmail{}
+	err := ormer.Engine.Table(&User{}).Cols("owner", "email").In("owner", owners).And("email <> ''").Find(&rows)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	used := map[string]bool{}
+	for _, row := range rows {
+		used[row.Owner+"/"+NormalizeEmail(row.Email)] = true
+	}
+
+	accepted := []*User{}
+	rejected := []*User{}
+	for _, user := range users {
+		if user.Email == "" {
+			accepted = append(accepted, user)
+			continue
+		}
+
+		key := user.Owner + "/" + user.Email
+		if used[key] {
+			rejected = append(rejected, user)
+			continue
+		}
+		used[key] = true
+		accepted = append(accepted, user)
+	}
+
+	return accepted, rejected, nil
 }
 
 func HasUserByField(organizationName string, field string, value string) bool {
@@ -115,13 +213,19 @@ func SetUserField(user *User, field string, value string) (bool, error) {
 		user.UpdateUserPassword(organization)
 		bean[strings.ToLower(field)] = user.Password
 		bean["password_type"] = user.PasswordType
+	} else if strings.ToLower(field) == "email" {
+		value = NormalizeEmail(value)
+		if err := CheckEmailUnique(user.Owner, value, user.Name, "en"); err != nil {
+			return false, err
+		}
+		bean["email"] = value
 	} else {
 		bean[strings.ToLower(field)] = value
 	}
 
 	affected, err := ormer.Engine.Table(user).ID(core.PK{user.Owner, user.Name}).Update(bean)
 	if err != nil {
-		return false, err
+		return false, wrapUserEmailUniqueError(err, "en")
 	}
 
 	user, err = getUser(user.Owner, user.Name)
@@ -238,8 +342,9 @@ func SetUserOAuthProperties(organization *Organization, user *User, providerType
 	if userInfo.Email != "" {
 		propertyName := fmt.Sprintf("oauth_%s_email", providerType)
 		setUserProperty(user, propertyName, userInfo.Email)
-		if user.Email == "" {
-			user.Email = userInfo.Email
+		// Only adopt the provider's email if no other user of the organization already uses it
+		if user.Email == "" && CheckEmailUnique(user.Owner, userInfo.Email, user.Name, "en") == nil {
+			user.Email = NormalizeEmail(userInfo.Email)
 		}
 	}
 

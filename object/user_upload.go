@@ -160,5 +160,17 @@ func UploadUsers(owner string, path string, userObj *User, lang string) (bool, e
 		return false, fmt.Errorf("no users are modified")
 	}
 
+	newUsers, rejectedUsers, err := filterUsersWithUniqueEmail(newUsers)
+	if err != nil {
+		return false, err
+	}
+	if len(rejectedUsers) > 0 {
+		duplicates := []string{}
+		for _, user := range rejectedUsers {
+			duplicates = append(duplicates, fmt.Sprintf("%s (%s)", user.Name, user.Email))
+		}
+		return false, fmt.Errorf("%s: %s", i18n.Translate(lang, "check:Email already exists"), strings.Join(duplicates, ", "))
+	}
+
 	return AddUsersInBatch(newUsers)
 }

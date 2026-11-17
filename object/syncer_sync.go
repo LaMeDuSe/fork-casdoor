@@ -143,6 +143,17 @@ func (syncer *Syncer) syncUsers() error {
 	}
 
 	if len(newUsers) != 0 {
+		var rejectedUsers []*User
+		newUsers, rejectedUsers, err = filterUsersWithUniqueEmail(newUsers)
+		if err != nil {
+			return err
+		}
+		for _, user := range rejectedUsers {
+			fmt.Printf("Skip syncing user: %s because email: %s already exists in the organization\n", user.GetId(), user.Email)
+		}
+	}
+
+	if len(newUsers) != 0 {
 		_, err = AddUsersInBatch(newUsers)
 		if err != nil {
 			return err

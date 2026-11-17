@@ -15,6 +15,7 @@
 package object
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -69,6 +70,13 @@ func (syncer *Syncer) updateUserForOriginalFields(user *User, key string) (bool,
 	}
 
 	columns := syncer.getCasdoorColumns()
+	if util.InSlice(columns, "email") {
+		user.Email = NormalizeEmail(user.Email)
+		if user.Email != NormalizeEmail(oldUser.Email) && CheckEmailUnique(oldUser.Owner, user.Email, oldUser.Name, "en") != nil {
+			fmt.Printf("Keep email: %s for user: %s because email: %s already exists in the organization\n", oldUser.Email, oldUser.GetId(), user.Email)
+			user.Email = oldUser.Email
+		}
+	}
 	columns = append(columns, "affiliation", "hash", "pre_hash")
 	affected, err := ormer.Engine.Where(key+" = ? and owner = ?", syncer.getUserValue(&oldUser, key), oldUser.Owner).Cols(columns...).Update(user)
 	if err != nil {
