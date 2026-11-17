@@ -676,11 +676,12 @@ class LoginPage extends React.Component {
         </div>
       );
     } else if (signinItem.name === "Languages") {
-      const languages = application.organizationObj.languages;
+      const languages = application.organizationObj.languages ?? [];
       if (languages.length <= 1) {
-        const language = (languages.length === 1) ? languages[0] : "en";
-        if (Setting.getLanguage() !== language) {
-          Setting.setLanguage(language);
+        // An organization restricted to a single language uses it; with no restriction, keep the browser language.
+        // Not persisted, so other organizations still follow the browser language.
+        if (languages.length === 1 && Setting.getLanguage() !== languages[0]) {
+          Setting.setLanguage(languages[0], false);
         }
         return null;
       }

@@ -356,9 +356,10 @@ class App extends Component {
   }
 
   setLanguage(account) {
+    // Apply the account's preferred language for this session only, so the browser language stays the default
     const language = account?.language;
-    if (language !== null && language !== "" && language !== i18next.language) {
-      Setting.setLanguage(language);
+    if (language && language !== i18next.language) {
+      Setting.setLanguage(language, false);
     }
   }
 

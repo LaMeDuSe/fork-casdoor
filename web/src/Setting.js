@@ -17,7 +17,7 @@ import {Link} from "react-router-dom";
 import {Button, Select, Tag, Tooltip, message, theme} from "antd";
 import {QuestionCircleTwoTone} from "@ant-design/icons";
 import {isMobile as isMobileDevice} from "react-device-detect";
-import "./i18n";
+import {isSupportedLanguage} from "./i18n";
 import i18next from "i18next";
 import copy from "copy-to-clipboard";
 import {authConfig} from "./auth/Auth";
@@ -1141,9 +1141,21 @@ export function getLanguage() {
   return (i18next.language !== undefined && i18next.language !== null && i18next.language !== "" && i18next.language !== "null") ? i18next.language : Conf.DefaultLanguage;
 }
 
-export function setLanguage(language) {
-  localStorage.setItem("language", language);
-  i18next.changeLanguage(language);
+// persist=true only for an explicit user choice; automatic switches must not override the browser language on later visits
+export function setLanguage(language, persist = true) {
+  if (!isSupportedLanguage(language)) {
+    return;
+  }
+  if (persist) {
+    try {
+      localStorage.setItem("language", language);
+    } catch (e) {
+      // ignore storage errors (private mode, blocked storage)
+    }
+  }
+  if (i18next.language !== language) {
+    i18next.changeLanguage(language);
+  }
 }
 
 export function getAcceptLanguage() {
