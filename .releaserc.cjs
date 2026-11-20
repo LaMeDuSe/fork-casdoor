@@ -39,6 +39,11 @@ module.exports = {
     }],
     ["@semantic-release/github", {
       failOnError: false,
+      // Commits merged from upstream reference casdoor/casdoor PRs and issues (#5094, ...)
+      // that don't exist in this fork: commenting on them fails the release with a 404.
+      successComment: false,
+      failComment: false,
+      releasedLabels: false,
     }],
   ],
 };
