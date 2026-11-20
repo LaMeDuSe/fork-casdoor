@@ -926,7 +926,7 @@ class LoginPage extends React.Component {
       const providerHint = searchParams.get("provider_hint");
 
       return (
-        <div key={resultItemKey}>
+        <div key={resultItemKey} className={`login-providers login-providers-${signinItem.rule}`}>
           <div dangerouslySetInnerHTML={{__html: ("<style>" + signinItem.customCss?.replaceAll("<style>", "").replaceAll("</style>", "") + "</style>")}} />
           <Form.Item>
             {
@@ -1422,8 +1422,9 @@ class LoginPage extends React.Component {
       if (item) {
         let label = signinMethod.name === signinMethod.displayName ? item.label : signinMethod.displayName;
 
-        if (application?.signinMethods?.length >= 4 && label === "Verification code") {
-          label = "Code";
+        // Shorten the default label when space is tight (compare the method, not the translated label)
+        if (application?.signinMethods?.length >= 4 && signinMethod.name === "Verification code" && signinMethod.name === signinMethod.displayName) {
+          label = i18next.t("invitation:Code");
         }
 
         items.push({label: label, key: item.key});

@@ -1,17 +1,17 @@
 // lameduse/SignupPage.js
 // ======================
 // Thin wrapper around the original Casdoor SignupPage.
-// Applies Lameduse brand styling via CSS scoping without
-// duplicating any business logic.
+// Applies Lameduse brand styling and the animated background via AuthShell
+// without duplicating any business logic.
 
 import React from "react";
 import OriginalSignupPage from "../auth/SignupPage";
-import "./auth.css";
+import AuthShell from "./AuthShell";
 
 export default function SignupPage(props) {
   return (
-    <div className="lameduse-auth">
+    <AuthShell application={props.application} themeAlgorithm={props.themeAlgorithm} preview={props.preview}>
       <OriginalSignupPage {...props} />
-    </div>
+    </AuthShell>
   );
 }
