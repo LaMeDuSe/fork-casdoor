@@ -28,10 +28,14 @@ type UserInfo struct {
 	DisplayName string
 	UnionId     string
 	Email       string
-	Phone       string
-	CountryCode string
-	AvatarUrl   string
-	Extra       map[string]string
+	// EmailVerified reports whether the provider itself vouches for Email.
+	// Providers that make no such assertion leave it false.
+	EmailVerified bool
+	Phone         string
+	PhoneVerified bool
+	CountryCode   string
+	AvatarUrl     string
+	Extra         map[string]string
 }
 
 type ProviderInfo struct {
@@ -46,11 +50,15 @@ type ProviderInfo struct {
 	RedirectUrl   string
 	DisableSsl    bool
 	CodeVerifier  string
+	State         string
 
 	TokenURL    string
 	AuthURL     string
 	UserInfoURL string
 	UserMapping map[string]string
+
+	AppCertificate  string
+	RootCertificate string
 }
 
 type IdProvider interface {
@@ -103,14 +111,14 @@ func GetIdProvider(idpInfo *ProviderInfo, redirectUrl string) (IdProvider, error
 	case "Baidu":
 		return NewBaiduIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, redirectUrl), nil
 	case "Alipay":
-		return NewAlipayIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, redirectUrl), nil
-	case "Custom":
+		return NewAlipayIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, redirectUrl, idpInfo.AppCertificate, idpInfo.RootCertificate)
+	case "Custom", "Custom Flexible":
 		return NewCustomIdProvider(idpInfo, redirectUrl), nil
+	case "OIDC":
+		return NewOidcIdProvider(idpInfo, redirectUrl), nil
 	case "Infoflow":
-		if idpInfo.SubType == "Internal" {
+		if idpInfo.SubType == "" || idpInfo.SubType == "Internal" {
 			return NewInfoflowInternalIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, idpInfo.AppId, redirectUrl), nil
-		} else if idpInfo.SubType == "Third-party" {
-			return NewInfoflowIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, idpInfo.AppId, redirectUrl), nil
 		} else {
 			return nil, fmt.Errorf("Infoflow provider subType: %s is not supported", idpInfo.SubType)
 		}
@@ -124,10 +132,6 @@ func GetIdProvider(idpInfo *ProviderInfo, redirectUrl string) (IdProvider, error
 		return NewKwaiIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, redirectUrl), nil
 	case "Bilibili":
 		return NewBilibiliIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, redirectUrl), nil
-	case "MetaMask":
-		return NewMetaMaskIdProvider(), nil
-	case "Web3Onboard":
-		return NewWeb3OnboardIdProvider(), nil
 	case "Twitter":
 		provider := NewTwitterIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, redirectUrl)
 		provider.CodeVerifier = idpInfo.CodeVerifier
@@ -136,7 +140,7 @@ func GetIdProvider(idpInfo *ProviderInfo, redirectUrl string) (IdProvider, error
 		return NewTelegramIdProvider(idpInfo.ClientId, idpInfo.ClientSecret, redirectUrl), nil
 	default:
 		if isGothSupport(idpInfo.Type) {
-			return NewGothIdProvider(idpInfo.Type, idpInfo.ClientId, idpInfo.ClientSecret, idpInfo.ClientId2, idpInfo.ClientSecret2, redirectUrl, idpInfo.HostUrl)
+			return NewGothIdProvider(idpInfo.Type, idpInfo.SubType, idpInfo.ClientId, idpInfo.ClientSecret, idpInfo.ClientId2, idpInfo.ClientSecret2, redirectUrl, idpInfo.HostUrl)
 		}
 		if strings.HasPrefix(idpInfo.Type, "Custom") {
 			return NewCustomIdProvider(idpInfo, redirectUrl), nil

@@ -34,11 +34,14 @@ type Ldap struct {
 	Filter              string            `xorm:"varchar(200)" json:"filter"`
 	FilterFields        []string          `xorm:"varchar(100)" json:"filterFields"`
 	DefaultGroup        string            `xorm:"varchar(100)" json:"defaultGroup"`
+	DefaultGroups       []string          `xorm:"mediumtext" json:"defaultGroups"`
 	PasswordType        string            `xorm:"varchar(100)" json:"passwordType"`
 	CustomAttributes    map[string]string `json:"customAttributes"`
 
-	AutoSync int    `json:"autoSync"`
-	LastSync string `xorm:"varchar(100)" json:"lastSync"`
+	AutoSync            int    `json:"autoSync"`
+	LastSync            string `xorm:"varchar(100)" json:"lastSync"`
+	EnableGroups        bool   `xorm:"bool" json:"enableGroups"`
+	EnablePasswordReset bool   `xorm:"bool" json:"enablePasswordReset"`
 }
 
 func AddLdap(ldap *Ldap) (bool, error) {
@@ -97,7 +100,7 @@ func GetLdap(id string) (*Ldap, error) {
 	ldap := Ldap{Id: id}
 	existed, err := ormer.Engine.Get(&ldap)
 	if err != nil {
-		return &ldap, nil
+		return nil, err
 	}
 
 	if existed {
@@ -105,6 +108,14 @@ func GetLdap(id string) (*Ldap, error) {
 	} else {
 		return nil, nil
 	}
+}
+
+func GetLdapOfOwner(owner string, id string) (*Ldap, error) {
+	ldap, err := GetLdap(id)
+	if err != nil || ldap == nil || ldap.Owner != owner {
+		return nil, err
+	}
+	return ldap, nil
 }
 
 func GetMaskedLdap(ldap *Ldap, errs ...error) (*Ldap, error) {
@@ -142,7 +153,7 @@ func UpdateLdap(ldap *Ldap) (bool, error) {
 	var l *Ldap
 	var err error
 	if l, err = GetLdap(ldap.Id); err != nil {
-		return false, nil
+		return false, err
 	} else if l == nil {
 		return false, nil
 	}
@@ -152,9 +163,9 @@ func UpdateLdap(ldap *Ldap) (bool, error) {
 	}
 
 	affected, err := ormer.Engine.ID(ldap.Id).Cols("owner", "server_name", "host",
-		"port", "enable_ssl", "username", "password", "base_dn", "filter", "filter_fields", "auto_sync", "default_group", "password_type", "allow_self_signed_cert", "custom_attributes").Update(ldap)
+		"port", "enable_ssl", "username", "password", "base_dn", "filter", "filter_fields", "auto_sync", "default_group", "default_groups", "password_type", "allow_self_signed_cert", "custom_attributes", "enable_groups", "enable_password_reset").Update(ldap)
 	if err != nil {
-		return false, nil
+		return false, err
 	}
 
 	return affected != 0, nil

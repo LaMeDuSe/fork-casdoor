@@ -15,8 +15,11 @@
 package object
 
 import (
+	"strconv"
 	"strings"
 
+	"github.com/casdoor/casdoor/action"
+	"github.com/casdoor/casdoor/conf"
 	sender "github.com/casdoor/go-sms-sender"
 )
 
@@ -27,9 +30,21 @@ func getSmsClient(provider *Provider) (sender.SmsClient, error) {
 	if provider.Type == sender.HuaweiCloud || provider.Type == sender.AzureACS {
 		client, err = sender.NewSmsClient(provider.Type, provider.ClientId, provider.ClientSecret, provider.SignName, provider.TemplateCode, provider.ProviderUrl, provider.AppId)
 	} else if provider.Type == "Custom HTTP SMS" {
-		client, err = newHttpSmsClient(provider.Endpoint, provider.Method, provider.Title, provider.TemplateCode, provider.HttpHeaders, provider.UserMapping, provider.IssuerUrl, provider.EnableProxy)
+		client, err = newHttpSmsClient(provider.Endpoint, provider.Method, provider.Title, provider.TemplateCode, provider.BodyTemplate, provider.HttpHeaders, provider.UserMapping, provider.IssuerUrl, provider.EnableProxy, getTenantHttpClient(provider))
 	} else if provider.Type == "Alibaba Cloud PNVS SMS" {
 		client, err = newPnvsSmsClient(provider.ClientId, provider.ClientSecret, provider.SignName, provider.TemplateCode, provider.RegionId)
+	} else if provider.Type == TwilioVerify {
+		client, err = newTwilioVerifyClient(provider)
+	} else if provider.Type == ProviderTypePlugin {
+		module, hosts, err := getActionModule(provider.Owner, provider.SubType)
+		if err != nil {
+			return nil, err
+		}
+		client = action.NewSmsClient(provider.SubType, module, hosts, provider.GetActionConfig())
+	} else if provider.Type == sender.Twilio {
+		// For Twilio, the message body is pre-formatted in SendSms using the template.
+		// Pass "%s" as the template so go-sms-sender's fmt.Sprintf passes the content through unchanged.
+		client, err = sender.NewSmsClient(provider.Type, provider.ClientId, provider.ClientSecret, provider.SignName, "%s", provider.AppId)
 	} else {
 		client, err = sender.NewSmsClient(provider.Type, provider.ClientId, provider.ClientSecret, provider.SignName, provider.TemplateCode, provider.AppId)
 	}
@@ -50,6 +65,11 @@ func SendSms(provider *Provider, content string, phoneNumbers ...string) error {
 		if provider.AppId != "" {
 			phoneNumbers = append([]string{provider.AppId}, phoneNumbers...)
 		}
+		// Pre-format the message body using the provider's template.
+		// If the template contains "%s", substitute the code; otherwise use the content (code) directly.
+		if strings.Contains(provider.TemplateCode, "%s") {
+			content = strings.Replace(provider.TemplateCode, "%s", content, 1)
+		}
 	} else if provider.Type == sender.Aliyun || provider.Type == "Alibaba Cloud PNVS SMS" {
 		for i, number := range phoneNumbers {
 			phoneNumbers[i] = strings.TrimPrefix(number, "+86")
@@ -61,6 +81,9 @@ func SendSms(provider *Provider, content string, phoneNumbers ...string) error {
 		params["0"] = content
 	} else {
 		params["code"] = content
+		if provider.Type == "Alibaba Cloud PNVS SMS" {
+			params["min"] = strconv.FormatInt(conf.GetVerificationCodeTimeout(), 10)
+		}
 	}
 
 	err = client.SendMessage(params, phoneNumbers...)

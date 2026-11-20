@@ -83,8 +83,8 @@ func (c *ApiController) GetPlan() {
 		return
 	}
 
-	if plan != nil && includeOption {
-		options, err := object.GetPermissionsByRole(plan.Role)
+	if plan != nil && includeOption && plan.Role != "" {
+		options, err := object.GetPermissionsByRole(plan.GetRoleId())
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -108,9 +108,13 @@ func (c *ApiController) GetPlan() {
 // @router /update-plan [post]
 func (c *ApiController) UpdatePlan() {
 	id := c.Ctx.Input.Query("id")
-	owner := util.GetOwnerFromId(id)
+	owner, _, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
 	var plan object.Plan
-	err := json.Unmarshal(c.Ctx.Input.RequestBody, &plan)
+	err = json.Unmarshal(c.Ctx.Input.RequestBody, &plan)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
@@ -131,7 +135,7 @@ func (c *ApiController) UpdatePlan() {
 			}
 		}
 	}
-	c.Data["json"] = wrapActionResponse(object.UpdatePlan(id, &plan))
+	c.Data["json"] = WrapActionResponse(object.UpdatePlan(id, &plan))
 	c.ServeJSON()
 }
 
@@ -157,7 +161,7 @@ func (c *ApiController) AddPlan() {
 		return
 	}
 	plan.Product = product.Name
-	c.Data["json"] = wrapActionResponse(object.AddPlan(&plan))
+	c.Data["json"] = WrapActionResponse(object.AddPlan(&plan))
 	c.ServeJSON()
 }
 
@@ -182,6 +186,6 @@ func (c *ApiController) DeletePlan() {
 			return
 		}
 	}
-	c.Data["json"] = wrapActionResponse(object.DeletePlan(&plan))
+	c.Data["json"] = WrapActionResponse(object.DeletePlan(&plan))
 	c.ServeJSON()
 }

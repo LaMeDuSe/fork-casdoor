@@ -15,10 +15,8 @@
 package object
 
 import (
+	"errors"
 	"fmt"
-	"net/url"
-	"regexp"
-	"strings"
 
 	"github.com/casdoor/casdoor/i18n"
 	"github.com/casdoor/casdoor/util"
@@ -29,6 +27,26 @@ type SigninMethod struct {
 	Name        string `xorm:"varchar(100) notnull pk" json:"name"`
 	DisplayName string `xorm:"varchar(100)" json:"displayName"`
 	Rule        string `json:"rule"`
+}
+
+const (
+	// SigninMethodRuleHidePassword disables a signin method instead of only hiding it
+	// in the login page. The rule was named "Hide-Password" when it was added, so the
+	// applications configured before the rename still store the legacy value.
+	SigninMethodRuleHidePassword       = "Hide password"
+	SigninMethodRuleHidePasswordLegacy = "Hide-Password"
+
+	// SigninMethodRuleMagicLinkSignup lets a magic link sent to an address without an
+	// account create that account, the "Sign in only" rule signs existing users in.
+	SigninMethodRuleMagicLinkSignup = "Sign in or sign up"
+)
+
+func (signinMethod *SigninMethod) IsHidden() bool {
+	if signinMethod == nil {
+		return false
+	}
+
+	return signinMethod.Rule == SigninMethodRuleHidePassword || signinMethod.Rule == SigninMethodRuleHidePasswordLegacy
 }
 
 type SignupItem struct {
@@ -62,9 +80,17 @@ type SamlItem struct {
 }
 
 type JwtItem struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-	Type  string `json:"type"`
+	Name     string `json:"name"`
+	Category string `json:"category"`
+	Value    string `json:"value"`
+	Type     string `json:"type"`
+}
+
+type ScopeItem struct {
+	Name        string   `json:"name"`
+	DisplayName string   `json:"displayName"`
+	Description string   `json:"description"`
+	Tools       []string `json:"tools"` // MCP tools allowed by this scope
 }
 
 type Application struct {
@@ -73,33 +99,47 @@ type Application struct {
 	CreatedTime string `xorm:"varchar(100)" json:"createdTime"`
 
 	DisplayName                  string          `xorm:"varchar(100)" json:"displayName"`
+	Category                     string          `xorm:"varchar(20)" json:"category"`
+	Type                         string          `xorm:"varchar(20)" json:"type"`
+	Scopes                       []*ScopeItem    `xorm:"mediumtext" json:"scopes"`
 	Logo                         string          `xorm:"varchar(200)" json:"logo"`
+	LogoDark                     string          `xorm:"varchar(200)" json:"logoDark"`
 	Title                        string          `xorm:"varchar(100)" json:"title"`
 	Favicon                      string          `xorm:"varchar(200)" json:"favicon"`
 	Order                        int             `json:"order"`
-	HomepageUrl                  string          `xorm:"varchar(100)" json:"homepageUrl"`
-	Description                  string          `xorm:"varchar(100)" json:"description"`
+	HomepageUrl                  string          `xorm:"text" json:"homepageUrl"`
+	Description                  string          `xorm:"mediumtext" json:"description"`
 	Organization                 string          `xorm:"varchar(100)" json:"organization"`
 	Cert                         string          `xorm:"varchar(100)" json:"cert"`
 	DefaultGroup                 string          `xorm:"varchar(100)" json:"defaultGroup"`
+	DefaultTag                   string          `xorm:"varchar(100)" json:"defaultTag"`
 	HeaderHtml                   string          `xorm:"mediumtext" json:"headerHtml"`
+	PageHtml                     string          `xorm:"mediumtext" json:"pageHtml"`
+	EnableCustomScript           bool            `json:"enableCustomScript"`
 	EnablePassword               bool            `json:"enablePassword"`
 	EnableSignUp                 bool            `json:"enableSignUp"`
+	DisableSelfSignup            bool            `json:"disableSelfSignup"`
+	SignupApproval               bool            `json:"signupApproval"`
+	EnableGuestSignin            bool            `json:"enableGuestSignin"`
 	DisableSignin                bool            `json:"disableSignin"`
 	EnableSigninSession          bool            `json:"enableSigninSession"`
 	EnableAutoSignin             bool            `json:"enableAutoSignin"`
 	EnableCodeSignin             bool            `json:"enableCodeSignin"`
 	EnableExclusiveSignin        bool            `json:"enableExclusiveSignin"`
+	MaxSessions                  int             `json:"maxSessions"`
+	InactiveTimeoutMinutes       int             `json:"inactiveTimeoutMinutes"`
 	EnableSamlCompress           bool            `json:"enableSamlCompress"`
 	EnableSamlC14n10             bool            `json:"enableSamlC14n10"`
 	EnableSamlPostBinding        bool            `json:"enableSamlPostBinding"`
 	DisableSamlAttributes        bool            `json:"disableSamlAttributes"`
 	EnableSamlAssertionSignature bool            `json:"enableSamlAssertionSignature"`
 	UseEmailAsSamlNameId         bool            `json:"useEmailAsSamlNameId"`
+	SamlNameIdTemplate           string          `xorm:"mediumtext" json:"samlNameIdTemplate"`
 	EnableWebAuthn               bool            `json:"enableWebAuthn"`
 	EnableLinkWithEmail          bool            `json:"enableLinkWithEmail"`
 	OrgChoiceMode                string          `json:"orgChoiceMode"`
 	SamlReplyUrl                 string          `xorm:"varchar(500)" json:"samlReplyUrl"`
+	SamlSingleLogoutUrl          string          `xorm:"mediumtext" json:"samlSingleLogoutUrl"`
 	Providers                    []*ProviderItem `xorm:"mediumtext" json:"providers"`
 	SigninMethods                []*SigninMethod `xorm:"varchar(2000)" json:"signinMethods"`
 	SignupItems                  []*SignupItem   `xorm:"varchar(3000)" json:"signupItems"`
@@ -110,40 +150,85 @@ type Application struct {
 	Tags                         []string        `xorm:"mediumtext" json:"tags"`
 	SamlAttributes               []*SamlItem     `xorm:"varchar(1000)" json:"samlAttributes"`
 	SamlHashAlgorithm            string          `xorm:"varchar(20)" json:"samlHashAlgorithm"`
+	SamlC14nPrefix               string          `xorm:"varchar(100)" json:"samlC14nPrefix"`
 	IsShared                     bool            `json:"isShared"`
+	ExternalUsers                []string        `xorm:"mediumtext" json:"externalUsers"`
+	ExternalGroups               []string        `xorm:"mediumtext" json:"externalGroups"`
 	IpRestriction                string          `json:"ipRestriction"`
 
-	ClientId                string     `xorm:"varchar(100)" json:"clientId"`
-	ClientSecret            string     `xorm:"varchar(100)" json:"clientSecret"`
-	RedirectUris            []string   `xorm:"varchar(1000)" json:"redirectUris"`
-	ForcedRedirectOrigin    string     `xorm:"varchar(100)" json:"forcedRedirectOrigin"`
-	TokenFormat             string     `xorm:"varchar(100)" json:"tokenFormat"`
-	TokenSigningMethod      string     `xorm:"varchar(100)" json:"tokenSigningMethod"`
-	TokenFields             []string   `xorm:"varchar(1000)" json:"tokenFields"`
-	TokenAttributes         []*JwtItem `xorm:"mediumtext" json:"tokenAttributes"`
-	ExpireInHours           float64    `json:"expireInHours"`
-	RefreshExpireInHours    float64    `json:"refreshExpireInHours"`
-	CookieExpireInHours     int64      `json:"cookieExpireInHours"`
-	SignupUrl               string     `xorm:"varchar(200)" json:"signupUrl"`
-	SigninUrl               string     `xorm:"varchar(200)" json:"signinUrl"`
-	ForgetUrl               string     `xorm:"varchar(200)" json:"forgetUrl"`
-	AffiliationUrl          string     `xorm:"varchar(100)" json:"affiliationUrl"`
-	IpWhitelist             string     `xorm:"varchar(200)" json:"ipWhitelist"`
-	TermsOfUse              string     `xorm:"varchar(200)" json:"termsOfUse"`
-	SignupHtml              string     `xorm:"mediumtext" json:"signupHtml"`
-	SigninHtml              string     `xorm:"mediumtext" json:"signinHtml"`
-	ThemeData               *ThemeData `xorm:"json" json:"themeData"`
-	FooterHtml              string     `xorm:"mediumtext" json:"footerHtml"`
-	FormCss                 string     `xorm:"text" json:"formCss"`
-	FormCssMobile           string     `xorm:"text" json:"formCssMobile"`
-	FormOffset              int        `json:"formOffset"`
-	FormSideHtml            string     `xorm:"mediumtext" json:"formSideHtml"`
-	FormBackgroundUrl       string     `xorm:"varchar(200)" json:"formBackgroundUrl"`
-	FormBackgroundUrlMobile string     `xorm:"varchar(200)" json:"formBackgroundUrlMobile"`
+	ClientId                string                 `xorm:"varchar(100)" json:"clientId"`
+	ClientSecret            string                 `xorm:"varchar(100)" json:"clientSecret"`
+	ClientCert              string                 `xorm:"varchar(100)" json:"clientCert"`
+	FederatedCredentials    []*FederatedCredential `xorm:"mediumtext" json:"federatedCredentials"`
+	RedirectUris            []string               `xorm:"text" json:"redirectUris"`
+	BackchannelLogoutUri    string                 `xorm:"varchar(500)" json:"backchannelLogoutUri"`
+	ForcedRedirectOrigin    string                 `xorm:"varchar(100)" json:"forcedRedirectOrigin"`
+	TokenFormat             string                 `xorm:"varchar(100)" json:"tokenFormat"`
+	TokenSigningMethod      string                 `xorm:"varchar(100)" json:"tokenSigningMethod"`
+	TokenFields             []string               `xorm:"varchar(1000)" json:"tokenFields"`
+	TokenAttributes         []*JwtItem             `xorm:"mediumtext" json:"tokenAttributes"`
+	TokenGroupFormat        string                 `xorm:"varchar(100)" json:"tokenGroupFormat"`
+	ExpireInHours           float64                `json:"expireInHours"`
+	RefreshExpireInHours    float64                `json:"refreshExpireInHours"`
+	DisableRefreshRotation  bool                   `json:"disableRefreshRotation"`
+	CookieExpireInHours     int64                  `json:"cookieExpireInHours"`
+	EnableStepUpMfa         bool                   `json:"enableStepUpMfa"`
+	StepUpMfaTypes          []string               `xorm:"varchar(200)" json:"stepUpMfaTypes"`
+	StepUpExpireInSeconds   int                    `json:"stepUpExpireInSeconds"`
+	SignupUrl               string                 `xorm:"text" json:"signupUrl"`
+	SigninUrl               string                 `xorm:"text" json:"signinUrl"`
+	ForgetUrl               string                 `xorm:"text" json:"forgetUrl"`
+	AffiliationUrl          string                 `xorm:"text" json:"affiliationUrl"`
+	IpWhitelist             string                 `xorm:"varchar(200)" json:"ipWhitelist"`
+	TermsOfUse              string                 `xorm:"varchar(200)" json:"termsOfUse"`
+	PrivacyPolicy           string                 `xorm:"mediumtext" json:"privacyPolicy"`
+	SignupHtml              string                 `xorm:"mediumtext" json:"signupHtml"`
+	SigninHtml              string                 `xorm:"mediumtext" json:"signinHtml"`
+	ThemeData               *ThemeData             `xorm:"json" json:"themeData"`
+	FooterHtml              string                 `xorm:"mediumtext" json:"footerHtml"`
+	FormCss                 string                 `xorm:"text" json:"formCss"`
+	FormCssMobile           string                 `xorm:"text" json:"formCssMobile"`
+	FormOffset              int                    `json:"formOffset"`
+	FormSideHtml            string                 `xorm:"mediumtext" json:"formSideHtml"`
+	FormBackgroundUrl       string                 `xorm:"varchar(200)" json:"formBackgroundUrl"`
+	FormBackgroundUrlMobile string                 `xorm:"varchar(200)" json:"formBackgroundUrlMobile"`
 
 	FailedSigninLimit      int `json:"failedSigninLimit"`
 	FailedSigninFrozenTime int `json:"failedSigninFrozenTime"`
 	CodeResendTimeout      int `json:"codeResendTimeout"`
+
+	CustomScopes []*ScopeDescription `xorm:"mediumtext" json:"customScopes"`
+
+	// Reverse proxy fields
+	Domain       string   `xorm:"varchar(100)" json:"domain"`
+	OtherDomains []string `xorm:"text" json:"otherDomains"`
+	UpstreamHost string   `xorm:"varchar(100)" json:"upstreamHost"`
+	SslMode      string   `xorm:"varchar(100)" json:"sslMode"`
+	SslCert      string   `xorm:"varchar(100)" json:"sslCert"`
+
+	// FormFill signs users into legacy systems without SSO by filling their sign-in forms with the managed accounts
+	FormFill *FormFill `xorm:"json" json:"formFill"`
+
+	Provisioning *ProvisioningConfig `xorm:"json" json:"provisioning"`
+
+	CertObj *Cert `xorm:"-"`
+
+	RegistrationAccessToken string `xorm:"varchar(100)" json:"registrationAccessToken"`
+	TokenEndpointAuthMethod string `xorm:"varchar(100)" json:"tokenEndpointAuthMethod"`
+}
+
+func (application *Application) HasSigninMethod(name string) bool {
+	if application == nil {
+		return false
+	}
+
+	for _, signinMethod := range application.SigninMethods {
+		if signinMethod != nil && signinMethod.Name == name && !signinMethod.IsHidden() {
+			return true
+		}
+	}
+
+	return false
 }
 
 func GetApplicationCount(owner, field, value string) (int64, error) {
@@ -198,192 +283,6 @@ func GetPaginationOrganizationApplications(owner, organization string, offset, l
 	return applications, nil
 }
 
-func getProviderMap(owner string) (m map[string]*Provider, err error) {
-	providers, err := GetProviders(owner)
-	if err != nil {
-		return nil, err
-	}
-
-	m = map[string]*Provider{}
-	for _, provider := range providers {
-		m[provider.Name] = GetMaskedProvider(provider, true)
-	}
-
-	return m, err
-}
-
-func extendApplicationWithProviders(application *Application) (err error) {
-	m, err := getProviderMap(application.Organization)
-	if err != nil {
-		return err
-	}
-
-	for _, providerItem := range application.Providers {
-		if provider, ok := m[providerItem.Name]; ok {
-			providerItem.Provider = provider
-		}
-	}
-
-	return
-}
-
-func extendApplicationWithOrg(application *Application) (err error) {
-	organization, err := getOrganization(application.Owner, application.Organization)
-	application.OrganizationObj = organization
-	return
-}
-
-func extendApplicationWithSigninItems(application *Application) (err error) {
-	if len(application.SigninItems) == 0 {
-		signinItem := &SigninItem{
-			Name:        "Back button",
-			Visible:     true,
-			CustomCss:   ".back-button {\n      top: 65px;\n      left: 15px;\n      position: absolute;\n}\n.back-inner-button{}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Languages",
-			Visible:     true,
-			CustomCss:   ".login-languages {\n    top: 55px;\n    right: 5px;\n    position: absolute;\n}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Logo",
-			Visible:     true,
-			CustomCss:   ".login-logo-box {}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Signin methods",
-			Visible:     true,
-			CustomCss:   ".signin-methods {}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Username",
-			Visible:     true,
-			CustomCss:   ".login-username {}\n.login-username-input{}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Password",
-			Visible:     true,
-			CustomCss:   ".login-password {}\n.login-password-input{}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Verification code",
-			Visible:     true,
-			CustomCss:   ".verification-code {}\n.verification-code-input{}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Agreement",
-			Visible:     true,
-			CustomCss:   ".login-agreement {}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Forgot password?",
-			Visible:     true,
-			CustomCss:   ".login-forget-password {\n    display: inline-flex;\n    justify-content: space-between;\n    width: 320px;\n    margin-bottom: 25px;\n}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Login button",
-			Visible:     true,
-			CustomCss:   ".login-button-box {\n    margin-bottom: 5px;\n}\n.login-button {\n    width: 100%;\n}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Signup link",
-			Visible:     true,
-			CustomCss:   ".login-signup-link {\n    margin-bottom: 24px;\n    display: flex;\n    justify-content: end;\n}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-		signinItem = &SigninItem{
-			Name:        "Providers",
-			Visible:     true,
-			CustomCss:   ".provider-img {\n      width: 30px;\n      margin: 5px;\n}\n.provider-big-img {\n      margin-bottom: 10px;\n}",
-			Placeholder: "",
-			Rule:        "None",
-		}
-		application.SigninItems = append(application.SigninItems, signinItem)
-	}
-	for idx, item := range application.SigninItems {
-		if item.Label != "" && item.CustomCss == "" {
-			application.SigninItems[idx].CustomCss = item.Label
-			application.SigninItems[idx].Label = ""
-		}
-	}
-	return
-}
-
-func extendApplicationWithSigninMethods(application *Application) (err error) {
-	if len(application.SigninMethods) == 0 {
-		if application.EnablePassword {
-			signinMethod := &SigninMethod{Name: "Password", DisplayName: "Password", Rule: "All"}
-			application.SigninMethods = append(application.SigninMethods, signinMethod)
-		}
-		if application.EnableCodeSignin {
-			signinMethod := &SigninMethod{Name: "Verification code", DisplayName: "Verification code", Rule: "All"}
-			application.SigninMethods = append(application.SigninMethods, signinMethod)
-		}
-		if application.EnableWebAuthn {
-			signinMethod := &SigninMethod{Name: "WebAuthn", DisplayName: "WebAuthn", Rule: "None"}
-			application.SigninMethods = append(application.SigninMethods, signinMethod)
-		}
-
-		signinMethod := &SigninMethod{Name: "Face ID", DisplayName: "Face ID", Rule: "None"}
-		application.SigninMethods = append(application.SigninMethods, signinMethod)
-	}
-
-	if len(application.SigninMethods) == 0 {
-		signinMethod := &SigninMethod{Name: "Password", DisplayName: "Password", Rule: "All"}
-		application.SigninMethods = append(application.SigninMethods, signinMethod)
-	}
-
-	return
-}
-
-func extendApplicationWithSignupItems(application *Application) (err error) {
-	if len(application.SignupItems) == 0 {
-		application.SignupItems = []*SignupItem{
-			{Name: "ID", Visible: false, Required: true, Prompted: false, Rule: "Random"},
-			{Name: "Username", Visible: true, Required: true, Prompted: false, Rule: "None"},
-			{Name: "Display name", Visible: true, Required: true, Prompted: false, Rule: "None"},
-			{Name: "Password", Visible: true, Required: true, Prompted: false, Rule: "None"},
-			{Name: "Confirm password", Visible: true, Required: true, Prompted: false, Rule: "None"},
-			{Name: "Email", Visible: true, Required: true, Prompted: false, Rule: "None"},
-			{Name: "Phone", Visible: true, Required: true, Prompted: false, Rule: "None"},
-			{Name: "Agreement", Visible: true, Required: true, Prompted: false, Rule: "None"},
-		}
-	}
-	return
-}
-
 func getApplication(owner string, name string) (*Application, error) {
 	if owner == "" || name == "" {
 		return nil, nil
@@ -427,11 +326,54 @@ func getApplication(owner string, name string) (*Application, error) {
 	}
 }
 
+func GetApplicationByOrganizationAndName(organization string, name string) (*Application, error) {
+	if organization == "" || name == "" {
+		return nil, nil
+	}
+
+	realApplicationName, sharedOrg := util.GetSharedOrgFromApp(name)
+
+	application := Application{}
+	existed, err := ormer.Engine.Where("organization = ?", organization).And("name = ?", realApplicationName).Get(&application)
+	if err != nil {
+		return nil, err
+	}
+
+	if !existed {
+		return nil, nil
+	}
+
+	if application.IsShared && sharedOrg != "" {
+		application.Organization = sharedOrg
+	}
+
+	err = extendApplicationWithProviders(&application)
+	if err != nil {
+		return nil, err
+	}
+
+	err = extendApplicationWithOrg(&application)
+	if err != nil {
+		return nil, err
+	}
+
+	err = extendApplicationWithSigninMethods(&application)
+	if err != nil {
+		return nil, err
+	}
+	err = extendApplicationWithSigninItems(&application)
+	if err != nil {
+		return nil, err
+	}
+
+	return &application, nil
+}
+
 func GetApplicationByOrganizationName(organization string) (*Application, error) {
 	application := Application{}
 	existed, err := ormer.Engine.Where("organization=?", organization).Get(&application)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
 	if existed {
@@ -464,9 +406,15 @@ func GetApplicationByOrganizationName(organization string) (*Application, error)
 func GetApplicationByUser(user *User) (*Application, error) {
 	if user.SignupApplication != "" {
 		return getApplication("admin", user.SignupApplication)
-	} else {
+	}
+
+	// users without a signup application should get the organization's default one
+	application, err := GetDefaultApplication(util.GetId("admin", user.Owner))
+	if err != nil {
 		return GetApplicationByOrganizationName(user.Owner)
 	}
+
+	return application, nil
 }
 
 func GetApplicationByUserId(userId string) (application *Application, err error) {
@@ -475,7 +423,7 @@ func GetApplicationByUserId(userId string) (application *Application, err error)
 		return nil, err
 	}
 	if IsAppUser(userId) {
-		application, err = getApplication("admin", name)
+		application, err = getAppUserApplication(name)
 		return
 	}
 
@@ -490,7 +438,11 @@ func GetApplicationByUserId(userId string) (application *Application, err error)
 func GetApplicationByClientId(clientId string) (*Application, error) {
 	application := Application{}
 
-	realClientId, sharedOrg := util.GetSharedOrgFromApp(clientId)
+	realClientId, sharedOrg := clientId, ""
+	// a URL client_id may contain "-org-" in its path
+	if !IsClientIdMetadataUrl(clientId) {
+		realClientId, sharedOrg = util.GetSharedOrgFromApp(clientId)
+	}
 
 	existed, err := ormer.Engine.Where("client_id=?", realClientId).Get(&application)
 	if err != nil {
@@ -536,156 +488,7 @@ func GetApplication(id string) (*Application, error) {
 	return getApplication(owner, name)
 }
 
-func GetMaskedApplication(application *Application, userId string) *Application {
-	if application == nil {
-		return nil
-	}
-
-	if application.TokenFields == nil {
-		application.TokenFields = []string{}
-	}
-
-	if application.FailedSigninLimit == 0 {
-		application.FailedSigninLimit = DefaultFailedSigninLimit
-	}
-	if application.FailedSigninFrozenTime == 0 {
-		application.FailedSigninFrozenTime = DefaultFailedSigninFrozenTime
-	}
-
-	isOrgUser := false
-	if userId != "" {
-		if isUserIdGlobalAdmin(userId) {
-			return application
-		}
-
-		user, err := GetUser(userId)
-		if err != nil {
-			panic(err)
-		}
-		if user != nil {
-			if user.IsApplicationAdmin(application) {
-				return application
-			}
-
-			if user.Owner == application.Organization {
-				isOrgUser = true
-			}
-		}
-	}
-
-	application.ClientSecret = "***"
-	application.Cert = "***"
-	application.EnablePassword = false
-	application.EnableSigninSession = false
-	application.EnableCodeSignin = false
-	application.EnableSamlCompress = false
-	application.EnableSamlC14n10 = false
-	application.EnableSamlPostBinding = false
-	application.DisableSamlAttributes = false
-	application.EnableWebAuthn = false
-	application.EnableLinkWithEmail = false
-	application.SamlReplyUrl = "***"
-
-	providerItems := []*ProviderItem{}
-	for _, providerItem := range application.Providers {
-		if providerItem.Provider != nil && (providerItem.Provider.Category == "OAuth" || providerItem.Provider.Category == "Web3" || providerItem.Provider.Category == "Captcha" || providerItem.Provider.Category == "SAML" || providerItem.Provider.Category == "Face ID") {
-			providerItems = append(providerItems, providerItem)
-		}
-	}
-	application.Providers = providerItems
-
-	application.GrantTypes = []string{}
-	application.RedirectUris = []string{}
-	application.TokenFormat = "***"
-	application.TokenFields = []string{}
-	application.ExpireInHours = -1
-	application.RefreshExpireInHours = -1
-	application.FailedSigninLimit = -1
-	application.FailedSigninFrozenTime = -1
-
-	if application.OrganizationObj != nil {
-		application.OrganizationObj.MasterPassword = "***"
-		application.OrganizationObj.DefaultPassword = "***"
-		application.OrganizationObj.MasterVerificationCode = "***"
-		application.OrganizationObj.PasswordType = "***"
-		application.OrganizationObj.PasswordSalt = "***"
-		application.OrganizationObj.InitScore = -1
-		application.OrganizationObj.EnableSoftDeletion = false
-
-		if !isOrgUser {
-			application.OrganizationObj.MfaItems = nil
-			if !application.OrganizationObj.IsProfilePublic {
-				application.OrganizationObj.AccountItems = nil
-			}
-		}
-	}
-
-	return application
-}
-
-func GetMaskedApplications(applications []*Application, userId string) []*Application {
-	if isUserIdGlobalAdmin(userId) {
-		return applications
-	}
-
-	for _, application := range applications {
-		application = GetMaskedApplication(application, userId)
-	}
-	return applications
-}
-
-func GetAllowedApplications(applications []*Application, userId string, lang string) ([]*Application, error) {
-	if userId == "" {
-		return nil, fmt.Errorf(i18n.Translate(lang, "auth:Unauthorized operation"))
-	}
-
-	if isUserIdGlobalAdmin(userId) {
-		return applications, nil
-	}
-
-	user, err := GetUser(userId)
-	if err != nil {
-		return nil, err
-	}
-	if user == nil {
-		return nil, fmt.Errorf(i18n.Translate(lang, "auth:Unauthorized operation"))
-	}
-
-	if user.IsAdmin {
-		return applications, nil
-	}
-
-	res := []*Application{}
-	for _, application := range applications {
-		var allowed bool
-		allowed, err = CheckLoginPermission(userId, application)
-		if err != nil {
-			return nil, err
-		}
-
-		if allowed {
-			res = append(res, application)
-		}
-	}
-	return res, nil
-}
-
-func checkMultipleCaptchaProviders(application *Application, lang string) error {
-	var captchaProviders []string
-	for _, providerItem := range application.Providers {
-		if providerItem.Provider != nil && providerItem.Provider.Category == "Captcha" {
-			captchaProviders = append(captchaProviders, providerItem.Name)
-		}
-	}
-
-	if len(captchaProviders) > 1 {
-		return fmt.Errorf(i18n.Translate(lang, "general:Multiple captcha providers are not allowed in the same application: %s"), strings.Join(captchaProviders, ", "))
-	}
-
-	return nil
-}
-
-func UpdateApplication(id string, application *Application, isGlobalAdmin bool, lang string) (bool, error) {
+func UpdateApplication(id string, application *Application, isGlobalAdmin bool, lang string, columns []string) (bool, error) {
 	owner, name, err := util.GetOwnerAndNameFromIdWithError(id)
 	if err != nil {
 		return false, err
@@ -696,8 +499,17 @@ func UpdateApplication(id string, application *Application, isGlobalAdmin bool, 
 	}
 
 	if !isGlobalAdmin && oldApplication.Organization != application.Organization {
-		return false, fmt.Errorf(i18n.Translate(lang, "auth:Unauthorized operation"))
+		return false, errors.New(i18n.Translate(lang, "auth:Unauthorized operation"))
 	}
+
+	if !isGlobalAdmin {
+		err = CheckApplicationCustomHtml(application, oldApplication)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	application.Owner = owner
 
 	if name == "app-built-in" {
 		application.Name = name
@@ -728,26 +540,35 @@ func UpdateApplication(id string, application *Application, isGlobalAdmin bool, 
 		return false, err
 	}
 
+	err = validateCustomScopes(application.CustomScopes, lang)
+	if err != nil {
+		return false, err
+	}
+
 	for _, providerItem := range application.Providers {
 		providerItem.Provider = nil
 	}
 
-	session := ormer.Engine.ID(core.PK{owner, name}).AllCols()
+	session := ormer.Engine.ID(core.PK{owner, name}).Where("organization = ?", oldApplication.Organization)
+	if len(columns) > 0 {
+		session = session.MustCols(columns...)
+	} else {
+		session = session.AllCols()
+	}
 	if application.ClientSecret == "***" {
-		session.Omit("client_secret")
+		session = session.Omit("client_secret")
 	}
 	affected, err := session.Update(application)
 	if err != nil {
 		return false, err
 	}
 
+	ClearProvisioningApplicationCache()
 	return affected != 0, nil
 }
 
-func AddApplication(application *Application) (bool, error) {
-	if application.Owner == "" {
-		application.Owner = "admin"
-	}
+func AddApplication(application *Application, lang string) (bool, error) {
+	application.Owner = "admin"
 	if application.Organization == "" {
 		application.Organization = "built-in"
 	}
@@ -757,6 +578,29 @@ func AddApplication(application *Application) (bool, error) {
 	if application.ClientSecret == "" {
 		application.ClientSecret = util.GenerateClientSecret()
 	}
+	if application.TokenFormat == "" {
+		tokenFormat, err := GetDefaultTokenFormat(application.Organization)
+		if err != nil {
+			return false, err
+		}
+
+		application.TokenFormat = tokenFormat
+	}
+	if len(application.TokenFields) == 0 {
+		tokenFields, err := GetDefaultTokenFields(application.Organization)
+		if err != nil {
+			return false, err
+		}
+
+		application.TokenFields = tokenFields
+	}
+	if application.ExpireInHours == 0 {
+		expireInHours, refreshExpireInHours, _ := getDcrTokenLifetimes(nil)
+		application.ExpireInHours = expireInHours
+		if application.RefreshExpireInHours == 0 {
+			application.RefreshExpireInHours = refreshExpireInHours
+		}
+	}
 
 	app, err := GetApplicationByClientId(application.ClientId)
 	if err != nil {
@@ -764,7 +608,16 @@ func AddApplication(application *Application) (bool, error) {
 	}
 
 	if app != nil {
-		return false, nil
+		return false, fmt.Errorf(i18n.Translate(lang, "general:The client ID: %s is already used by another application"), application.ClientId)
+	}
+
+	if application.IsShared == true && application.Organization != "built-in" {
+		return false, fmt.Errorf("only applications belonging to built-in organization can be shared")
+	}
+
+	err = checkMultipleCaptchaProviders(application, lang)
+	if err != nil {
+		return false, err
 	}
 
 	// Initialize default values for required fields to prevent UI errors
@@ -783,13 +636,18 @@ func AddApplication(application *Application) (bool, error) {
 		return false, err
 	}
 
+	err = validateCustomScopes(application.CustomScopes, lang)
+	if err != nil {
+		return false, err
+	}
+
 	for _, providerItem := range application.Providers {
 		providerItem.Provider = nil
 	}
 
 	affected, err := ormer.Engine.Insert(application)
 	if err != nil {
-		return false, nil
+		return false, err
 	}
 
 	return affected != 0, nil
@@ -810,260 +668,4 @@ func DeleteApplication(application *Application) (bool, error) {
 	}
 
 	return deleteApplication(application)
-}
-
-func (application *Application) GetId() string {
-	return fmt.Sprintf("%s/%s", application.Owner, application.Name)
-}
-
-func (application *Application) IsRedirectUriValid(redirectUri string) bool {
-	isValid, err := util.IsValidOrigin(redirectUri)
-	if err != nil {
-		panic(err)
-	}
-	if isValid {
-		return true
-	}
-
-	for _, targetUri := range application.RedirectUris {
-		if isRedirectUriMatched(targetUri, redirectUri) {
-			return true
-		}
-	}
-	return false
-}
-
-// redirectUriRegexChars are characters that only appear in a registered redirect URI when the admin
-// intends it as a regular expression (plain URLs never contain them, except "?" which is handled separately).
-const redirectUriRegexChars = `*+^$()[]{}|\`
-
-// isRedirectUriMatched checks a requested redirect URI against one registered entry.
-//
-// CVE-2026-5467: the previous check accepted the URI when the entry matched anywhere in it
-// (unanchored regex or strings.Contains), so "https://evil.com/?x=https://app.com/callback" or
-// "https://app.com.evil.com" passed and the authorization code could be sent to an attacker.
-// Now an entry matches only:
-//  1. exactly;
-//  2. as a URL with the same scheme, host and port, the requested path being the registered
-//     path or below it (segment boundary), so "https://app.com" still allows "https://app.com/callback";
-//  3. as a bare host ("app.com", no scheme): the requested URI's host must be exactly that host;
-//  4. as an explicit regular expression (contains regex syntax), matched against the whole URI.
-func isRedirectUriMatched(targetUri string, redirectUri string) bool {
-	targetUri = strings.TrimSpace(targetUri)
-	if targetUri == "" || redirectUri == "" {
-		return false
-	}
-
-	if redirectUri == targetUri {
-		return true
-	}
-
-	if strings.ContainsAny(targetUri, redirectUriRegexChars) {
-		targetUriRegex, err := regexp.Compile("^(?:" + targetUri + ")$")
-		return err == nil && targetUriRegex.MatchString(redirectUri)
-	}
-
-	requested, err := url.Parse(redirectUri)
-	if err != nil || requested.Host == "" || requested.User != nil {
-		return false
-	}
-
-	if !strings.Contains(targetUri, "://") {
-		return strings.EqualFold(requested.Host, targetUri) || strings.EqualFold(requested.Hostname(), targetUri)
-	}
-
-	target, err := url.Parse(targetUri)
-	if err != nil || target.Host == "" {
-		return false
-	}
-
-	if !strings.EqualFold(requested.Scheme, target.Scheme) || !strings.EqualFold(requested.Host, target.Host) {
-		return false
-	}
-
-	// The registered entry may pin a query string: then it must be identical
-	if target.RawQuery != "" && requested.RawQuery != target.RawQuery {
-		return false
-	}
-
-	targetPath := strings.TrimSuffix(target.Path, "/")
-	requestedPath := requested.Path
-	return targetPath == "" || requestedPath == targetPath || strings.HasPrefix(requestedPath, targetPath+"/")
-}
-
-func (application *Application) IsPasswordEnabled() bool {
-	if len(application.SigninMethods) == 0 {
-		return application.EnablePassword
-	} else {
-		for _, signinMethod := range application.SigninMethods {
-			if signinMethod.Name == "Password" {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-func (application *Application) IsPasswordWithLdapEnabled() bool {
-	if len(application.SigninMethods) == 0 {
-		return application.EnablePassword
-	} else {
-		for _, signinMethod := range application.SigninMethods {
-			if signinMethod.Name == "Password" && signinMethod.Rule == "All" {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-func (application *Application) IsCodeSigninViaEmailEnabled() bool {
-	if len(application.SigninMethods) == 0 {
-		return application.EnableCodeSignin
-	} else {
-		for _, signinMethod := range application.SigninMethods {
-			if signinMethod.Name == "Verification code" && signinMethod.Rule != "Phone only" {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-func (application *Application) IsCodeSigninViaSmsEnabled() bool {
-	if len(application.SigninMethods) == 0 {
-		return application.EnableCodeSignin
-	} else {
-		for _, signinMethod := range application.SigninMethods {
-			if signinMethod.Name == "Verification code" && signinMethod.Rule != "Email only" {
-				return true
-			}
-		}
-		return false
-	}
-}
-
-func (application *Application) IsLdapEnabled() bool {
-	if len(application.SigninMethods) > 0 {
-		for _, signinMethod := range application.SigninMethods {
-			if signinMethod.Name == "LDAP" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (application *Application) IsFaceIdEnabled() bool {
-	if len(application.SigninMethods) > 0 {
-		for _, signinMethod := range application.SigninMethods {
-			if signinMethod.Name == "Face ID" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func IsOriginAllowed(origin string) (bool, error) {
-	applications, err := GetApplications("")
-	if err != nil {
-		return false, err
-	}
-
-	for _, application := range applications {
-		if application.IsRedirectUriValid(origin) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func getApplicationMap(organization string) (map[string]*Application, error) {
-	applicationMap := make(map[string]*Application)
-	applications, err := GetOrganizationApplications("admin", organization)
-	if err != nil {
-		return applicationMap, err
-	}
-
-	for _, application := range applications {
-		applicationMap[application.Name] = application
-	}
-
-	return applicationMap, nil
-}
-
-func ExtendManagedAccountsWithUser(user *User) (*User, error) {
-	if user.ManagedAccounts == nil || len(user.ManagedAccounts) == 0 {
-		return user, nil
-	}
-
-	applicationMap, err := getApplicationMap(user.Owner)
-	if err != nil {
-		return user, err
-	}
-
-	var managedAccounts []ManagedAccount
-	for _, managedAccount := range user.ManagedAccounts {
-		application := applicationMap[managedAccount.Application]
-		if application != nil {
-			managedAccount.SigninUrl = application.SigninUrl
-			managedAccounts = append(managedAccounts, managedAccount)
-		}
-	}
-	user.ManagedAccounts = managedAccounts
-
-	return user, nil
-}
-
-func applicationChangeTrigger(oldName string, newName string) error {
-	session := ormer.Engine.NewSession()
-	defer session.Close()
-
-	err := session.Begin()
-	if err != nil {
-		return err
-	}
-
-	organization := new(Organization)
-	organization.DefaultApplication = newName
-	_, err = session.Where("default_application=?", oldName).Update(organization)
-	if err != nil {
-		return err
-	}
-
-	user := new(User)
-	user.SignupApplication = newName
-	_, err = session.Where("signup_application=?", oldName).Update(user)
-	if err != nil {
-		return err
-	}
-
-	resource := new(Resource)
-	resource.Application = newName
-	_, err = session.Where("application=?", oldName).Update(resource)
-	if err != nil {
-		return err
-	}
-
-	var permissions []*Permission
-	err = ormer.Engine.Find(&permissions)
-	if err != nil {
-		return err
-	}
-	for i := 0; i < len(permissions); i++ {
-		permissionResoureces := permissions[i].Resources
-		for j := 0; j < len(permissionResoureces); j++ {
-			if permissionResoureces[j] == oldName {
-				permissionResoureces[j] = newName
-			}
-		}
-		permissions[i].Resources = permissionResoureces
-		_, err = session.Where("owner=?", permissions[i].Owner).Where("name=?", permissions[i].Name).Update(permissions[i])
-		if err != nil {
-			return err
-		}
-	}
-
-	return session.Commit()
 }

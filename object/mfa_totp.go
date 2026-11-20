@@ -16,6 +16,9 @@ package object
 
 import (
 	"errors"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pquerna/otp"
@@ -58,11 +61,13 @@ func (mfa *TotpMfa) Initiate(userId string, issuer string) (*MfaProps, error) {
 	return &mfaProps, nil
 }
 
-func (mfa *TotpMfa) SetupVerify(passcode string) error {
-	result, err := totp.ValidateCustom(passcode, mfa.Secret, time.Now().UTC(), totp.ValidateOpts{
-		Period:    MfaTotpPeriodInSeconds,
+func (mfa *TotpMfa) SetupVerify(passcode string, lang string) error {
+	// an imported hardware token may have another time step or length, kept after its secret, see otp_token.go
+	secret, period, digits := parseTotpSecret(mfa.Secret)
+	result, err := totp.ValidateCustom(passcode, secret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    period,
 		Skew:      1,
-		Digits:    otp.DigitsSix,
+		Digits:    digits,
 		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {
@@ -93,11 +98,17 @@ func (mfa *TotpMfa) Enable(user *User) error {
 	return nil
 }
 
-func (mfa *TotpMfa) Verify(passcode string) error {
-	result, err := totp.ValidateCustom(passcode, mfa.Secret, time.Now().UTC(), totp.ValidateOpts{
-		Period:    MfaTotpPeriodInSeconds,
+func (mfa *TotpMfa) Verify(passcode string, lang string) error {
+	if mfa.Secret == "" {
+		return errors.New("totp is not enabled")
+	}
+
+	// an imported hardware token may have another time step or length, kept after its secret, see otp_token.go
+	secret, period, digits := parseTotpSecret(mfa.Secret)
+	result, err := totp.ValidateCustom(passcode, secret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    period,
 		Skew:      1,
-		Digits:    otp.DigitsSix,
+		Digits:    digits,
 		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {
@@ -124,4 +135,23 @@ func NewTotpMfaUtil(config *MfaProps) *TotpMfa {
 		secretSize: 20,
 		digits:     otp.DigitsSix,
 	}
+}
+
+func parseTotpSecret(value string) (string, uint, otp.Digits) {
+	secret, query, found := strings.Cut(value, "?")
+	period, digits := uint(MfaTotpPeriodInSeconds), otp.DigitsSix
+	if !found {
+		return secret, period, digits
+	}
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		return secret, period, digits
+	}
+	if p, err := strconv.Atoi(values.Get("period")); err == nil && p > 0 {
+		period = uint(p)
+	}
+	if values.Get("digits") == "8" {
+		digits = otp.DigitsEight
+	}
+	return secret, period, digits
 }

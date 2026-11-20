@@ -47,6 +47,8 @@ type AuthForm struct {
 	RedirectUri  string `json:"redirectUri"`
 	Method       string `json:"method"`
 	CodeVerifier string `json:"codeVerifier"`
+	// the state the identity provider sent back, which some providers want again in later requests
+	CallbackState string `json:"callbackState"`
 
 	EmailCode   string `json:"emailCode"`
 	PhoneCode   string `json:"phoneCode"`
@@ -73,6 +75,12 @@ type AuthForm struct {
 	FaceId      []float64 `json:"faceId"`
 	FaceIdImage []string  `json:"faceIdImage"`
 	UserCode    string    `json:"userCode"`
+
+	// a certificate sign-in through a UKey plug-in: the certificate in PEM or base64 DER, the challenge from
+	// /api/get-cert-challenge and the signature of the challenge in base64
+	Certificate string `json:"certificate"`
+	Nonce       string `json:"nonce"`
+	Signature   string `json:"signature"`
 }
 
 func GetAuthFormFieldValue(form *AuthForm, fieldName string) (bool, string) {

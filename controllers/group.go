@@ -30,6 +30,11 @@ import (
 // @Success 200 {array} object.Group The Response object
 // @router /get-groups [get]
 func (c *ApiController) GetGroups() {
+	if scope := c.getDelegatedScope(); scope != nil {
+		c.getDelegatedGroups(scope)
+		return
+	}
+
 	owner := c.Ctx.Input.Query("owner")
 	limit := c.Ctx.Input.Query("pageSize")
 	page := c.Ctx.Input.Query("p")
@@ -72,19 +77,22 @@ func (c *ApiController) GetGroups() {
 			c.ResponseError(err.Error())
 			return
 		}
-		groupsHaveChildrenMap, err := object.GetGroupsHaveChildrenMap(groups)
+		groupsParentMap, err := object.GetGroupsParentMap(groups)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		groupIdsHaveChildren, err := object.GetGroupIdsHaveChildren(groups)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
 		for _, group := range groups {
-			_, ok := groupsHaveChildrenMap[group.GetId()]
-			if ok {
-				group.HaveChildren = true
-			}
+			group.HaveChildren = groupIdsHaveChildren[group.GetId()]
 
-			parent, ok := groupsHaveChildrenMap[fmt.Sprintf("%s/%s", group.Owner, group.ParentId)]
+			parent, ok := groupsParentMap[fmt.Sprintf("%s/%s", group.Owner, group.ParentId)]
 			if ok {
 				group.ParentName = parent.DisplayName
 			}
@@ -117,6 +125,11 @@ func (c *ApiController) GetGroup() {
 		return
 	}
 
+	if scope := c.getDelegatedScope(); scope != nil && (group == nil || group.Owner != scope.Organization || !scope.HasGroup(group.Name)) {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return
+	}
+
 	err = object.ExtendGroupWithUsers(group)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -144,7 +157,23 @@ func (c *ApiController) UpdateGroup() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateGroup(id, &group))
+	if scope := c.getDelegatedScope(); scope != nil {
+		oldGroup, err := object.GetGroup(id)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if oldGroup == nil {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
+		if err = scope.CheckGroupUpdate(oldGroup, &group, c.GetAcceptLanguage()); err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdateGroup(id, &group, c.IsGlobalAdmin(), c.GetAcceptLanguage()))
 	c.ServeJSON()
 }
 
@@ -163,7 +192,18 @@ func (c *ApiController) AddGroup() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddGroup(&group))
+	if !c.requireOrganizationPermission(group.Owner) {
+		return
+	}
+
+	if scope := c.getDelegatedScope(); scope != nil {
+		if err = scope.CheckGroupUpdate(nil, &group, c.GetAcceptLanguage()); err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddGroup(&group))
 	c.ServeJSON()
 }
 
@@ -182,6 +222,19 @@ func (c *ApiController) DeleteGroup() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteGroup(&group))
+	if scope := c.getDelegatedScope(); scope != nil {
+		storedGroup, err := object.GetGroup(util.GetId(group.Owner, group.Name))
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if storedGroup == nil || storedGroup.Owner != scope.Organization || !scope.HasGroup(storedGroup.Name) || scope.IsRootGroup(storedGroup.Name) {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
+		group = object.Group{Owner: storedGroup.Owner, Name: storedGroup.Name}
+	}
+
+	c.Data["json"] = WrapActionResponse(object.DeleteGroup(&group))
 	c.ServeJSON()
 }

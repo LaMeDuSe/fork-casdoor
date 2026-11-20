@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -63,6 +64,9 @@ func (idp *TelegramIdProvider) GetToken(code string) (*oauth2.Token, error) {
 	// Verify the data authenticity
 	if err := idp.verifyTelegramAuth(authData); err != nil {
 		return nil, fmt.Errorf("failed to verify Telegram auth data: %v", err)
+	}
+	if err := checkTelegramAuthDate(authData); err != nil {
+		return nil, err
 	}
 
 	// Create a token with the user ID as access token
@@ -121,10 +125,23 @@ func (idp *TelegramIdProvider) verifyTelegramAuth(authData map[string]interface{
 	calculatedHash := hex.EncodeToString(h.Sum(nil))
 
 	// Compare hashes
-	if calculatedHash != hash {
+	if !hmac.Equal([]byte(calculatedHash), []byte(strings.ToLower(hash))) {
 		return fmt.Errorf("data verification failed")
 	}
 
+	return nil
+}
+
+const telegramAuthMaxAge = 24 * time.Hour
+
+func checkTelegramAuthDate(authData map[string]interface{}) error {
+	authDate, ok := telegramAsInt64(authData["auth_date"])
+	if !ok {
+		return fmt.Errorf("invalid auth_date in Telegram auth data")
+	}
+	if time.Since(time.Unix(authDate, 0)) > telegramAuthMaxAge {
+		return fmt.Errorf("the Telegram auth data has expired")
+	}
 	return nil
 }
 
@@ -151,6 +168,12 @@ func (idp *TelegramIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, erro
 	lastName, _ := authData["last_name"].(string)
 	username, _ := authData["username"].(string)
 	photoUrl, _ := authData["photo_url"].(string)
+
+	// Telegram usernames are optional. Generate a stable fallback so downstream
+	// user-record creation never receives an empty username.
+	if username == "" {
+		username = fmt.Sprintf("telegram_%d", userId)
+	}
 
 	// Build display name with fallback
 	displayName := strings.TrimSpace(firstName + " " + lastName)

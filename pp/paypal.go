@@ -17,7 +17,6 @@ package pp
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 
 	"github.com/casdoor/casdoor/conf"
@@ -58,7 +57,8 @@ func (pp *PaypalPaymentProvider) Pay(r *PayReq) (*PayResp, error) {
 			CurrencyCode: r.Currency,                    // e.g."USD"
 			Value:        priceFloat64ToString(r.Price), // e.g."100.00"
 		},
-		Description: joinAttachString([]string{r.ProductDisplayName, r.ProductName, r.ProviderName}),
+		Description: r.ProductDisplayName,
+		CustomId:    joinAttachString(r),
 	}
 	units = append(units, unit)
 
@@ -108,7 +108,7 @@ func (pp *PaypalPaymentProvider) Notify(body []byte, orderId string) (*NotifyRes
 			notifyResult.NotifyMessage = errDetail.Description
 			return notifyResult, nil
 		default:
-			err = fmt.Errorf(errDetail.Description)
+			err = errors.New(errDetail.Description)
 			return nil, err
 		}
 	}
@@ -125,20 +125,27 @@ func (pp *PaypalPaymentProvider) Notify(body []byte, orderId string) (*NotifyRes
 			notifyResult.NotifyMessage = errDetail.Description
 			return notifyResult, nil
 		default:
-			err = fmt.Errorf(errDetail.Description)
+			err = errors.New(errDetail.Description)
 			return nil, err
 		}
 	}
 
 	paymentName := detailRsp.Response.Id
-	price, err := strconv.ParseFloat(detailRsp.Response.PurchaseUnits[0].Amount.Value, 64)
+	purchaseUnit := detailRsp.Response.PurchaseUnits[0]
+	price, err := strconv.ParseFloat(purchaseUnit.Amount.Value, 64)
 	if err != nil {
 		return nil, err
 	}
-	currency := detailRsp.Response.PurchaseUnits[0].Amount.CurrencyCode
-	productDisplayName, productName, providerName, err := parseAttachString(detailRsp.Response.PurchaseUnits[0].Description)
+	currency := purchaseUnit.Amount.CurrencyCode
+	attachInfo, err := parseAttachString(purchaseUnit.CustomId)
 	if err != nil {
 		return nil, err
+	}
+	if attachInfo.ProductName == "" {
+		// Payments created before the move to custom_id still attach via description
+		if legacyInfo, legacyErr := parseAttachString(purchaseUnit.Description); legacyErr == nil {
+			attachInfo = legacyInfo
+		}
 	}
 	// TODO: status better handler, e.g.`hanging`
 	var paymentStatus PaymentState
@@ -151,9 +158,9 @@ func (pp *PaypalPaymentProvider) Notify(body []byte, orderId string) (*NotifyRes
 	notifyResult = &NotifyResult{
 		PaymentStatus:      paymentStatus,
 		PaymentName:        paymentName,
-		ProductName:        productName,
-		ProductDisplayName: productDisplayName,
-		ProviderName:       providerName,
+		ProductName:        attachInfo.ProductName,
+		ProductDisplayName: attachInfo.ProductDisplayName,
+		ProviderName:       attachInfo.ProviderName,
 		Price:              price,
 		Currency:           currency,
 

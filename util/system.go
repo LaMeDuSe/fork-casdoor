@@ -15,23 +15,31 @@
 package util
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/process"
 )
 
 type SystemInfo struct {
-	CpuUsage    []float64 `json:"cpuUsage"`
-	MemoryUsed  uint64    `json:"memoryUsed"`
-	MemoryTotal uint64    `json:"memoryTotal"`
+	CpuUsage     []float64 `json:"cpuUsage"`
+	MemoryUsed   uint64    `json:"memoryUsed"`
+	MemoryTotal  uint64    `json:"memoryTotal"`
+	DiskUsed     uint64    `json:"diskUsed"`
+	DiskTotal    uint64    `json:"diskTotal"`
+	NetworkSent  uint64    `json:"networkSent"`
+	NetworkRecv  uint64    `json:"networkRecv"`
+	NetworkTotal uint64    `json:"networkTotal"`
 }
 
 type VersionInfo struct {
@@ -69,6 +77,56 @@ func getMemoryUsage() (uint64, uint64, error) {
 	return memInfo.RSS, virtualMem.Total, nil
 }
 
+// getDiskUsage gets disk usage for Casdoor's data directory
+func getDiskUsage() (uint64, uint64, error) {
+	_, filename, _, _ := runtime.Caller(0)
+	rootPath := path.Dir(path.Dir(filename))
+	dataPath := filepath.Join(rootPath, "data")
+
+	var size uint64
+	err := filepath.Walk(dataPath, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			size += uint64(info.Size())
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+
+	diskStat, err := disk.Usage(dataPath)
+	if err != nil {
+		diskStat, err = disk.Usage("/")
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+
+	return size, diskStat.Total, nil
+}
+
+// getNetworkUsage gets Casdoor process's own I/O usage
+func getNetworkUsage() (uint64, uint64, uint64, error) {
+	proc, err := process.NewProcess(int32(os.Getpid()))
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	ioCounters, err := proc.IOCounters()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	bytesSent := ioCounters.WriteBytes
+	bytesRecv := ioCounters.ReadBytes
+	bytesTotal := bytesSent + bytesRecv
+
+	return bytesSent, bytesRecv, bytesTotal, nil
+}
+
 func GetSystemInfo() (*SystemInfo, error) {
 	cpuUsage, err := getCpuUsage()
 	if err != nil {
@@ -80,10 +138,22 @@ func GetSystemInfo() (*SystemInfo, error) {
 		return nil, err
 	}
 
+	diskUsed, diskTotal, err := getDiskUsage()
+	if err != nil {
+		return nil, err
+	}
+
+	networkSent, networkRecv, networkTotal, _ := getNetworkUsage()
+
 	res := &SystemInfo{
-		CpuUsage:    cpuUsage,
-		MemoryUsed:  memoryUsed,
-		MemoryTotal: memoryTotal,
+		CpuUsage:     cpuUsage,
+		MemoryUsed:   memoryUsed,
+		MemoryTotal:  memoryTotal,
+		DiskUsed:     diskUsed,
+		DiskTotal:    diskTotal,
+		NetworkSent:  networkSent,
+		NetworkRecv:  networkRecv,
+		NetworkTotal: networkTotal,
 	}
 	return res, nil
 }
@@ -115,6 +185,11 @@ func GetVersionInfo() (*VersionInfo, error) {
 		// This technique should work for both lightweight and annotated tags.
 		revHash, err := r.ResolveRevision(plumbing.Revision(t.Name()))
 		if err != nil {
+			// A shallow clone can hold a tag whose target object was never
+			// fetched. Skip it rather than failing the whole lookup.
+			if errors.Is(err, plumbing.ErrObjectNotFound) {
+				return nil
+			}
 			return err
 		}
 		tagMap[*revHash] = t.Name().Short()
@@ -129,10 +204,23 @@ func GetVersionInfo() (*VersionInfo, error) {
 		return res, err
 	}
 
+	defer cIter.Close()
+
 	commitOffset := 0
 	version := ""
 	// iterates over the commits
-	err = cIter.ForEach(func(c *object.Commit) error {
+	for {
+		c, err := cIter.Next()
+		if err != nil {
+			// The parents of a shallow clone's boundary commit are not in the
+			// object database, so walk as far as the history actually goes
+			// instead of reporting the truncation as a failure.
+			if errors.Is(err, io.EOF) || errors.Is(err, plumbing.ErrObjectNotFound) {
+				break
+			}
+			return res, err
+		}
+
 		tag, ok := tagMap[c.Hash]
 		if ok {
 			if version == "" {
@@ -142,10 +230,6 @@ func GetVersionInfo() (*VersionInfo, error) {
 		if version == "" {
 			commitOffset++
 		}
-		return nil
-	})
-	if err != nil {
-		return res, err
 	}
 
 	res = &VersionInfo{

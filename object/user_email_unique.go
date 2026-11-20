@@ -16,6 +16,7 @@ package object
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -234,7 +235,7 @@ func isUserEmailUniqueViolation(err error) bool {
 // wrapUserEmailUniqueError turns a database unique violation on the email index into the user-facing message
 func wrapUserEmailUniqueError(err error, lang string) error {
 	if isUserEmailUniqueViolation(err) {
-		return fmt.Errorf(i18n.Translate(lang, "check:Email already exists"))
+		return errors.New(i18n.Translate(lang, "check:Email already exists"))
 	}
 	return err
 }

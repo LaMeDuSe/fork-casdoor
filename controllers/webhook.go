@@ -77,8 +77,17 @@ func (c *ApiController) GetWebhooks() {
 // @router /get-webhook [get]
 func (c *ApiController) GetWebhook() {
 	id := c.Ctx.Input.Query("id")
+	organization := c.Ctx.Input.Query("organization")
 
-	webhook, err := object.GetWebhook(id)
+	var webhook *object.Webhook
+	var err error
+	isGlobalAdmin, _ := c.isGlobalAdmin()
+	if !isGlobalAdmin {
+		webhook, err = object.GetWebhookByOrganization(id, organization)
+	} else {
+		webhook, err = object.GetWebhook(id)
+	}
+
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
@@ -105,7 +114,13 @@ func (c *ApiController) UpdateWebhook() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateWebhook(id, &webhook, c.IsGlobalAdmin(), c.GetAcceptLanguage()))
+	if !c.IsGlobalAdmin() {
+		// a webhook with "singleOrgOnly" turned off receives the records of every
+		// organization, so only global admins are allowed to turn it off
+		webhook.SingleOrgOnly = true
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdateWebhook(id, &webhook, c.IsGlobalAdmin(), c.GetAcceptLanguage()))
 	c.ServeJSON()
 }
 
@@ -124,7 +139,17 @@ func (c *ApiController) AddWebhook() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddWebhook(&webhook))
+	if !c.requireOrganizationPermission(webhook.Organization) {
+		return
+	}
+
+	if !c.IsGlobalAdmin() {
+		// a webhook with "singleOrgOnly" turned off receives the records of every
+		// organization, so only global admins are allowed to turn it off
+		webhook.SingleOrgOnly = true
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddWebhook(&webhook))
 	c.ServeJSON()
 }
 
@@ -143,6 +168,6 @@ func (c *ApiController) DeleteWebhook() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteWebhook(&webhook))
+	c.Data["json"] = WrapActionResponse(object.DeleteWebhook(&webhook))
 	c.ServeJSON()
 }

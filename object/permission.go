@@ -28,12 +28,19 @@ type Permission struct {
 	Name        string `xorm:"varchar(100) notnull pk" json:"name"`
 	CreatedTime string `xorm:"varchar(100)" json:"createdTime"`
 	DisplayName string `xorm:"varchar(100)" json:"displayName"`
-	Description string `xorm:"varchar(100)" json:"description"`
+	Description string `xorm:"mediumtext" json:"description"`
 
 	Users   []string `xorm:"mediumtext" json:"users"`
 	Groups  []string `xorm:"mediumtext" json:"groups"`
 	Roles   []string `xorm:"mediumtext" json:"roles"`
 	Domains []string `xorm:"mediumtext" json:"domains"`
+	// Agents and Conditions are for the "MCP tool" permissions of the MCP gateway
+	Agents     []string               `xorm:"mediumtext" json:"agents"`
+	Conditions []*PermissionCondition `xorm:"mediumtext" json:"conditions"`
+
+	// SourceGroups and SourceRoles are only set when the permission is resolved for a user, both being empty means it was assigned directly
+	SourceGroups []string `xorm:"-" json:"sourceGroups,omitempty"`
+	SourceRoles  []string `xorm:"-" json:"sourceRoles,omitempty"`
 
 	Model        string   `xorm:"varchar(100)" json:"model"`
 	Adapter      string   `xorm:"varchar(100)" json:"adapter"`
@@ -42,6 +49,12 @@ type Permission struct {
 	Actions      []string `xorm:"mediumtext" json:"actions"`
 	Effect       string   `xorm:"varchar(100)" json:"effect"`
 	IsEnabled    bool     `json:"isEnabled"`
+
+	// ExpireTime is an optional RFC3339 timestamp. When set and reached, the permission
+	// is automatically revoked (its Casbin policies are removed and it is disabled) by the
+	// permission expiration job, providing time-limited access as required by standards
+	// such as ISO/IEC 27001 control 5.18. An empty value means the permission never expires.
+	ExpireTime string `xorm:"varchar(100)" json:"expireTime"`
 
 	Submitter   string `xorm:"varchar(100)" json:"submitter"`
 	Approver    string `xorm:"varchar(100)" json:"approver"`
@@ -117,18 +130,32 @@ func checkPermissionValid(permission *Permission) error {
 
 	if !HasRoleDefinition(enforcer.GetModel()) {
 		permission.Roles = []string{}
-		return nil
 	}
 
-	groupingPolicies, err := getGroupingPolicies(permission)
-	if err != nil {
-		return err
+	if !HasDomainDefinition(enforcer.GetModel()) {
+		permission.Domains = []string{}
 	}
 
-	if len(groupingPolicies) > 0 {
-		_, err = enforcer.AddGroupingPolicies(groupingPolicies)
+	return nil
+}
+
+// checkPermissionModel verifies that the model referenced by an "Application" permission exists and is valid.
+func checkPermissionModel(permission *Permission) error {
+	if permission.ResourceType == "Application" && permission.Model != "" {
+		model, err := getModelEx(permission.Model)
 		if err != nil {
 			return err
+		} else if model == nil {
+			return fmt.Errorf("the model: %s for permission: %s is not found", permission.Model, permission.GetId())
+		}
+
+		modelCfg, err := getModelCfg(model)
+		if err != nil {
+			return err
+		}
+
+		if len(strings.Split(modelCfg["p"], ",")) != 3 {
+			return fmt.Errorf("the model: %s for permission: %s is not valid, Casbin model's [policy_defination] section should have 3 elements", permission.Model, permission.GetId())
 		}
 	}
 
@@ -147,22 +174,9 @@ func UpdatePermission(id string, permission *Permission) (bool, error) {
 		return false, nil
 	}
 
-	if permission.ResourceType == "Application" && permission.Model != "" {
-		model, err := getModelEx(permission.Model)
-		if err != nil {
-			return false, err
-		} else if model == nil {
-			return false, fmt.Errorf("the model: %s for permission: %s is not found", permission.Model, permission.GetId())
-		}
-
-		modelCfg, err := getModelCfg(model)
-		if err != nil {
-			return false, err
-		}
-
-		if len(strings.Split(modelCfg["p"], ",")) != 3 {
-			return false, fmt.Errorf("the model: %s for permission: %s is not valid, Casbin model's [policy_defination] section should have 3 elements", permission.Model, permission.GetId())
-		}
+	err = checkPermissionModel(permission)
+	if err != nil {
+		return false, err
 	}
 
 	affected, err := ormer.Engine.ID(core.PK{owner, name}).AllCols().Update(permission)
@@ -171,16 +185,6 @@ func UpdatePermission(id string, permission *Permission) (bool, error) {
 	}
 
 	if affected != 0 {
-		err = removeGroupingPolicies(oldPermission)
-		if err != nil {
-			return false, err
-		}
-
-		err = removePolicies(oldPermission)
-		if err != nil {
-			return false, err
-		}
-
 		// if oldPermission.Adapter != "" && oldPermission.Adapter != permission.Adapter {
 		// 	isEmpty, _ := ormer.Engine.IsTableEmpty(oldPermission.Adapter)
 		// 	if isEmpty {
@@ -191,12 +195,7 @@ func UpdatePermission(id string, permission *Permission) (bool, error) {
 		// 	}
 		// }
 
-		err = addGroupingPolicies(permission)
-		if err != nil {
-			return false, err
-		}
-
-		err = addPolicies(permission)
+		err = updatePermissionsPolicies([]*Permission{oldPermission}, []*Permission{permission})
 		if err != nil {
 			return false, err
 		}
@@ -205,18 +204,84 @@ func UpdatePermission(id string, permission *Permission) (bool, error) {
 	return affected != 0, nil
 }
 
+// UpdatePermissions updates multiple permissions in a single call. Compared with issuing one
+// UpdatePermission request per permission, it rebuilds the Casbin policies grouped by model and
+// adapter, so each distinct enforcer is only constructed once instead of twice per permission.
+func UpdatePermissions(permissions []*Permission) (bool, error) {
+	if len(permissions) == 0 {
+		return false, nil
+	}
+
+	oldPermissions := make([]*Permission, 0, len(permissions))
+	newPermissions := make([]*Permission, 0, len(permissions))
+
+	for _, permission := range permissions {
+		err := checkPermissionValid(permission)
+		if err != nil {
+			return false, err
+		}
+
+		owner, name := util.GetOwnerAndNameFromIdNoCheck(permission.GetId())
+		oldPermission, err := getPermission(owner, name)
+		if err != nil {
+			return false, err
+		}
+		if oldPermission == nil {
+			continue
+		}
+
+		err = checkPermissionModel(permission)
+		if err != nil {
+			return false, err
+		}
+
+		affected, err := ormer.Engine.ID(core.PK{owner, name}).AllCols().Update(permission)
+		if err != nil {
+			return false, err
+		}
+
+		if affected != 0 {
+			oldPermissions = append(oldPermissions, oldPermission)
+			newPermissions = append(newPermissions, permission)
+		}
+	}
+
+	if len(newPermissions) == 0 {
+		return false, nil
+	}
+
+	err := updatePermissionsPolicies(oldPermissions, newPermissions)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// AddPermissionWithCheck also validates the permission's model, the same way UpdatePermission()
+// does it. AddPermission() itself cannot do this because it is used to create the built-in
+// permission before the built-in model exists.
+func AddPermissionWithCheck(permission *Permission) (bool, error) {
+	err := checkPermissionModel(permission)
+	if err != nil {
+		return false, err
+	}
+
+	return AddPermission(permission)
+}
+
 func AddPermission(permission *Permission) (bool, error) {
+	err := checkPermissionValid(permission)
+	if err != nil {
+		return false, err
+	}
+
 	affected, err := ormer.Engine.Insert(permission)
 	if err != nil {
 		return false, err
 	}
 
 	if affected != 0 {
-		err = addGroupingPolicies(permission)
-		if err != nil {
-			return false, err
-		}
-
 		err = addPolicies(permission)
 		if err != nil {
 			return false, err
@@ -241,11 +306,6 @@ func AddPermissions(permissions []*Permission) (bool, error) {
 	for _, permission := range permissions {
 		// add using for loop
 		if affected != 0 {
-			err = addGroupingPolicies(permission)
-			if err != nil {
-				return false, err
-			}
-
 			err = addPolicies(permission)
 			if err != nil {
 				return false, err
@@ -302,11 +362,6 @@ func DeletePermission(permission *Permission) (bool, error) {
 	}
 
 	if affected {
-		err = removeGroupingPolicies(permission)
-		if err != nil {
-			return false, err
-		}
-
 		err = removePolicies(permission)
 		if err != nil {
 			return false, err
@@ -343,6 +398,23 @@ func getPermissionsByUser(userId string) ([]*Permission, error) {
 	return res, nil
 }
 
+func getPermissionsByGroup(groupId string) ([]*Permission, error) {
+	permissions := []*Permission{}
+	err := ormer.Engine.Where("`groups` like ?", "%"+groupId+"\"%").Find(&permissions)
+	if err != nil {
+		return permissions, err
+	}
+
+	res := []*Permission{}
+	for _, permission := range permissions {
+		if util.InSlice(permission.Groups, groupId) {
+			res = append(res, permission)
+		}
+	}
+
+	return res, nil
+}
+
 func GetPermissionsByRole(roleId string) ([]*Permission, error) {
 	permissions := []*Permission{}
 	err := ormer.Engine.Where("roles like ?", "%"+roleId+"\"%").Find(&permissions)
@@ -360,9 +432,14 @@ func GetPermissionsByRole(roleId string) ([]*Permission, error) {
 	return res, nil
 }
 
-func GetPermissionsByResource(resourceId string) ([]*Permission, error) {
+// GetPermissionsByResource returns the permissions of the organization on the resource, of all organizations when owner is empty.
+func GetPermissionsByResource(owner string, resourceId string) ([]*Permission, error) {
 	permissions := []*Permission{}
-	err := ormer.Engine.Where("resources like ?", "%"+resourceId+"\"%").Find(&permissions)
+	session := ormer.Engine.Where("resources like ?", "%"+resourceId+"\"%")
+	if owner != "" {
+		session = session.And("owner = ?", owner)
+	}
+	err := session.Find(&permissions)
 	if err != nil {
 		return permissions, err
 	}
@@ -383,36 +460,77 @@ func getPermissionsAndRolesByUser(userId string) ([]*Permission, []*Role, error)
 		return nil, nil, err
 	}
 
-	existedPerms := map[string]struct{}{}
+	existedPerms := map[string]*Permission{}
+	directPerms := map[string]bool{}
 
 	for _, perm := range permissions {
 		perm.Users = nil
 
 		if _, ok := existedPerms[perm.Name]; !ok {
-			existedPerms[perm.Name] = struct{}{}
+			existedPerms[perm.Name] = perm
+		}
+		directPerms[perm.Name] = true
+	}
+
+	addPermission := func(perm *Permission) *Permission {
+		perm.Users = nil
+
+		existedPerm, ok := existedPerms[perm.Name]
+		if !ok {
+			existedPerms[perm.Name] = perm
+			permissions = append(permissions, perm)
+			return perm
+		}
+		return existedPerm
+	}
+
+	user, err := GetUser(userId)
+	if err != nil {
+		return nil, nil, err
+	}
+	if user != nil {
+		groupIds := append([]string{}, user.Groups...)
+		if len(user.Groups) > 0 {
+			groupIds = append(groupIds, "*", util.GetId(user.Owner, "*"))
+		}
+
+		for _, groupId := range groupIds {
+			perms, err := getPermissionsByGroup(groupId)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, perm := range perms {
+				existedPerm := addPermission(perm)
+				if !util.InSlice(existedPerm.SourceGroups, groupId) {
+					existedPerm.SourceGroups = append(existedPerm.SourceGroups, groupId)
+				}
+			}
 		}
 	}
 
-	permFromRoles := []*Permission{}
-
-	roles, err := getRolesByUser(userId)
+	roles, err := GetRolesByUser(userId)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	for _, role := range roles {
-		perms, err := GetPermissionsByRole(role.GetId())
+		roleId := role.GetId()
+		perms, err := GetPermissionsByRole(roleId)
 		if err != nil {
 			return nil, nil, err
 		}
-		permFromRoles = append(permFromRoles, perms...)
+		for _, perm := range perms {
+			existedPerm := addPermission(perm)
+			if !util.InSlice(existedPerm.SourceRoles, roleId) {
+				existedPerm.SourceRoles = append(existedPerm.SourceRoles, roleId)
+			}
+		}
 	}
 
-	for _, perm := range permFromRoles {
-		perm.Users = nil
-		if _, ok := existedPerms[perm.Name]; !ok {
-			existedPerms[perm.Name] = struct{}{}
-			permissions = append(permissions, perm)
+	for _, perm := range permissions {
+		if directPerms[perm.Name] {
+			perm.SourceGroups = nil
+			perm.SourceRoles = nil
 		}
 	}
 
@@ -476,7 +594,7 @@ func (p *Permission) GetModelAndAdapter() string {
 	return util.GetId(p.Model, p.Adapter)
 }
 
-func (p *Permission) isUserHit(name string) bool {
+func (p *Permission) IsUserHit(name string) bool {
 	targetOrg, targetName, err := util.GetOwnerAndNameFromIdWithError(name)
 	if err != nil {
 		return false
@@ -497,8 +615,26 @@ func (p *Permission) isUserHit(name string) bool {
 	return false
 }
 
+func (p *Permission) isGroupHit(userId string) bool {
+	user, err := GetUser(userId)
+	if err != nil || user == nil {
+		return false
+	}
+
+	for _, group := range p.Groups {
+		if group == "*" || group == util.GetId(p.Owner, "*") {
+			return len(user.Groups) > 0
+		}
+
+		if util.InSlice(user.Groups, group) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Permission) isRoleHit(userId string) bool {
-	targetRoles, err := getRolesByUser(userId)
+	targetRoles, err := GetRolesByUser(userId)
 	if err != nil {
 		return false
 	}

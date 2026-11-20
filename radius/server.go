@@ -15,25 +15,112 @@
 package radius
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/object"
+	"github.com/casdoor/casdoor/radius/authenticator"
 	"github.com/casdoor/casdoor/util"
 	"layeh.com/radius"
 	"layeh.com/radius/rfc2865"
 	"layeh.com/radius/rfc2866"
 )
 
-var StateMap map[string]AccessStateContent
+var (
+	StateMap     = map[string]AccessStateContent{}
+	stateMapLock sync.Mutex
+)
 
 const StateExpiredTime = time.Second * 120
 
 type AccessStateContent struct {
-	ExpiredAt time.Time
+	ExpiredAt    time.Time
+	Organization string
+	Username     string
+}
+
+func addAccessState(organization string, username string) string {
+	state := util.GenerateId()
+
+	stateMapLock.Lock()
+	defer stateMapLock.Unlock()
+	StateMap[state] = AccessStateContent{
+		ExpiredAt:    time.Now().Add(StateExpiredTime),
+		Organization: organization,
+		Username:     username,
+	}
+	return state
+}
+
+func takeAccessState(state string, organization string, username string) bool {
+	stateMapLock.Lock()
+	defer stateMapLock.Unlock()
+
+	stateContent, ok := StateMap[state]
+	if !ok {
+		return false
+	}
+	delete(StateMap, state)
+
+	return stateContent.ExpiredAt.After(time.Now()) && stateContent.Organization == organization && stateContent.Username == username
+}
+
+// radiusSecretSource uses the secret of the RADIUS client matching the source IP, and falls back to radiusSecret.
+type radiusSecretSource struct {
+	globalSecret []byte
+}
+
+func (s *radiusSecretSource) RADIUSSecret(ctx context.Context, remoteAddr net.Addr) ([]byte, error) {
+	client, err := object.GetRadiusClientByIp(getRemoteIp(remoteAddr))
+	if err != nil {
+		return nil, err
+	}
+	if client != nil {
+		return []byte(client.Secret), nil
+	}
+	return s.globalSecret, nil
+}
+
+func getRemoteIp(addr net.Addr) net.IP {
+	switch addr := addr.(type) {
+	case *net.UDPAddr:
+		return addr.IP
+	case *net.TCPAddr:
+		return addr.IP
+	}
+
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return nil
+	}
+	return net.ParseIP(host)
+}
+
+func getRequestRadiusClient(r *radius.Request) *object.RadiusClient {
+	client, err := object.GetRadiusClientByIp(getRemoteIp(r.RemoteAddr))
+	if err != nil {
+		log.Printf("getRequestRadiusClient() failed, err = %v", err)
+		return nil
+	}
+	return client
+}
+
+// getClientOrganization pins the organization to the one the RADIUS client is bound to, if any.
+func getClientOrganization(client *object.RadiusClient, organization string) (string, bool) {
+	if client == nil || client.Organization == "" {
+		return organization, true
+	}
+	if organization != "" && organization != client.Organization {
+		log.Printf("RADIUS client: %s is not allowed to access organization: %s", client.Name, organization)
+		return "", false
+	}
+	return client.Organization, true
 }
 
 func StartRadiusServer() {
@@ -41,7 +128,7 @@ func StartRadiusServer() {
 	server := radius.PacketServer{
 		Addr:         "0.0.0.0:" + conf.GetConfigString("radiusServerPort"),
 		Handler:      radius.HandlerFunc(handlerRadius),
-		SecretSource: radius.StaticSecretSource([]byte(secret)),
+		SecretSource: &radiusSecretSource{globalSecret: []byte(secret)},
 	}
 	log.Printf("Starting Radius server on %s", server.Addr)
 	if err := server.ListenAndServe(); err != nil {
@@ -50,8 +137,23 @@ func StartRadiusServer() {
 }
 
 func handlerRadius(w radius.ResponseWriter, r *radius.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("handlerRadius() recovered from panic: %v", rec)
+		}
+	}()
+
 	switch r.Code {
 	case radius.CodeAccessRequest:
+		// RFC 2869: a request carrying a Message-Authenticator must be silently
+		// discarded if it is wrong, and its responses must carry one too.
+		if authenticator.Present(r.Packet) {
+			if err := authenticator.VerifyRequest(r.Packet); err != nil {
+				log.Printf("handlerRadius() dropped Access-Request: %v", err)
+				return
+			}
+			w = authenticator.NewResponseWriter(w)
+		}
 		handleAccessRequest(w, r)
 	case radius.CodeAccountingRequest:
 		handleAccountingRequest(w, r)
@@ -60,87 +162,107 @@ func handlerRadius(w radius.ResponseWriter, r *radius.Request) {
 	}
 }
 
+func getRadiusOrganization(organization string) string {
+	if organization != "" {
+		return organization
+	}
+
+	organization = conf.GetConfigString("radiusDefaultOrganization")
+	if organization == "" {
+		return "built-in"
+	}
+	return organization
+}
+
+func getRadiusEnabledOrganization(organization string) *object.Organization {
+	org, err := object.GetOrganization(util.GetId("admin", organization))
+	if err != nil {
+		log.Printf("getRadiusEnabledOrganization() failed to get organization: %s, err = %v", organization, err)
+		return nil
+	}
+	if org == nil || !org.EnableRadius {
+		log.Printf("RADIUS is not enabled for organization: %s", organization)
+		return nil
+	}
+	return org
+}
+
 func handleAccessRequest(w radius.ResponseWriter, r *radius.Request) {
 	username := rfc2865.UserName_GetString(r.Packet)
 	password := rfc2865.UserPassword_GetString(r.Packet)
 	organization := rfc2865.Class_GetString(r.Packet)
 	state := rfc2865.State_GetString(r.Packet)
-	log.Printf("handleAccessRequest() username=%v, org=%v, password=%v", username, organization, password)
+	client := getRequestRadiusClient(r)
+	log.Printf("handleAccessRequest() username=%v, org=%v, client=%v", username, organization, getRadiusClientName(client))
 
-	if organization == "" {
-		organization = conf.GetConfigString("radiusDefaultOrganization")
-		if organization == "" {
-			organization = "built-in"
-		}
-	}
-
-	var user *object.User
-	var err error
-
-	if state == "" {
-		user, err = object.CheckUserPassword(organization, username, password, "en")
-	} else {
-		user, err = object.GetUser(fmt.Sprintf("%s/%s", organization, username))
-	}
-
-	if err != nil {
+	organization, ok := getClientOrganization(client, organization)
+	if !ok {
 		w.Write(r.Response(radius.CodeAccessReject))
 		return
 	}
 
-	if user.IsMfaEnabled() {
-		mfaProp := user.GetMfaProps(object.TotpType, false)
-		if mfaProp == nil {
-			w.Write(r.Response(radius.CodeAccessReject))
-			return
-		}
+	organization = getRadiusOrganization(organization)
+	org := getRadiusEnabledOrganization(organization)
+	if org == nil {
+		w.Write(r.Response(radius.CodeAccessReject))
+		return
+	}
 
-		if StateMap == nil {
-			StateMap = map[string]AccessStateContent{}
-		}
+	if state != "" {
+		handleOtpResponse(w, r, organization, username, state, password)
+		return
+	}
 
-		if state != "" {
-			stateContent, ok := StateMap[state]
-			if !ok {
-				w.Write(r.Response(radius.CodeAccessReject))
-				return
-			}
+	user, err := object.CheckUserPassword(organization, username, password, "en")
+	if err != nil || object.CheckPasswordOnlySignin(user, "", "en") != nil {
+		w.Write(r.Response(radius.CodeAccessReject))
+		return
+	}
 
-			delete(StateMap, state)
-			if stateContent.ExpiredAt.Before(time.Now()) {
-				w.Write(r.Response(radius.CodeAccessReject))
-				return
-			}
+	if user.IsMfaEnabled() && !org.DisableRadiusMfa {
+		responseState := addAccessState(organization, username)
+		response := r.Response(radius.CodeAccessChallenge)
 
-			mfaUtil := object.GetMfaUtil(mfaProp.MfaType, mfaProp)
-			if mfaUtil.Verify(password) != nil {
-				w.Write(r.Response(radius.CodeAccessReject))
-				return
-			}
-
-			w.Write(r.Response(radius.CodeAccessAccept))
-			return
-		}
-
-		responseState := util.GenerateId()
-		StateMap[responseState] = AccessStateContent{
-			time.Now().Add(StateExpiredTime),
-		}
-
-		err = rfc2865.State_Set(r.Packet, []byte(responseState))
+		err = rfc2865.State_Set(response, []byte(responseState))
 		if err != nil {
 			w.Write(r.Response(radius.CodeAccessReject))
 			return
 		}
 
-		err = rfc2865.ReplyMessage_Set(r.Packet, []byte("please enter OTP"))
+		err = rfc2865.ReplyMessage_Set(response, []byte("please enter OTP"))
 		if err != nil {
 			w.Write(r.Response(radius.CodeAccessReject))
 			return
 		}
 
-		r.Packet.Code = radius.CodeAccessChallenge
-		w.Write(r.Packet)
+		w.Write(response)
+		return
+	}
+
+	w.Write(r.Response(radius.CodeAccessAccept))
+}
+
+func handleOtpResponse(w radius.ResponseWriter, r *radius.Request, organization string, username string, state string, passcode string) {
+	if !takeAccessState(state, organization, username) {
+		w.Write(r.Response(radius.CodeAccessReject))
+		return
+	}
+
+	user, err := object.GetUser(util.GetId(organization, username))
+	if err != nil || user == nil || user.IsForbidden || user.IsDeleted {
+		w.Write(r.Response(radius.CodeAccessReject))
+		return
+	}
+
+	mfaProp := user.GetMfaProps(object.TotpType, false)
+	if !mfaProp.Enabled {
+		w.Write(r.Response(radius.CodeAccessReject))
+		return
+	}
+
+	if object.VerifyMfaWithLimit(user, func() error { return object.VerifyMfaPasscode(user, mfaProp, passcode, "en") }, "en") != nil {
+		w.Write(r.Response(radius.CodeAccessReject))
+		return
 	}
 
 	w.Write(r.Response(radius.CodeAccessAccept))
@@ -156,12 +278,21 @@ func handleAccountingRequest(w radius.ResponseWriter, r *radius.Request) {
 		organization, username, err = util.GetOwnerAndNameFromIdWithError(username)
 		if err != nil {
 			log.Printf("handleAccountingRequest() failed to parse username, err = %v", err)
-			w.Write(r.Response(radius.CodeAccessReject))
 			return
 		}
 	}
 
-	log.Printf("handleAccountingRequest() username=%v, org=%v, statusType=%v", username, organization, statusType)
+	client := getRequestRadiusClient(r)
+	log.Printf("handleAccountingRequest() username=%v, org=%v, statusType=%v, client=%v", username, organization, statusType, getRadiusClientName(client))
+	organization, ok := getClientOrganization(client, organization)
+	if !ok {
+		return
+	}
+	organization = getRadiusOrganization(organization)
+	if getRadiusEnabledOrganization(organization) == nil {
+		return
+	}
+
 	w.Write(r.Response(radius.CodeAccountingResponse))
 	var err error
 	defer func() {
@@ -172,28 +303,46 @@ func handleAccountingRequest(w radius.ResponseWriter, r *radius.Request) {
 	switch statusType {
 	case rfc2866.AcctStatusType_Value_Start:
 		// Start an accounting session
-		ra := GetAccountingFromRequest(r)
+		ra := getAccountingRecord(r, organization, username)
 		err = object.AddRadiusAccounting(ra)
 	case rfc2866.AcctStatusType_Value_InterimUpdate, rfc2866.AcctStatusType_Value_Stop:
 		// Interim update to an accounting session | Stop an accounting session
-		var (
-			newRa = GetAccountingFromRequest(r)
-			oldRa *object.RadiusAccounting
-		)
-		oldRa, err = object.GetRadiusAccountingBySessionId(newRa.AcctSessionId)
+		newRa := getAccountingRecord(r, organization, username)
+		stop := statusType == rfc2866.AcctStatusType_Value_Stop
+		if newRa.AcctSessionId == "" {
+			err = fmt.Errorf("missing Acct-Session-Id")
+			return
+		}
+		var oldRa *object.RadiusAccounting
+		oldRa, err = object.GetRadiusAccountingBySessionId(newRa.Owner, newRa.AcctSessionId)
 		if err != nil {
 			return
 		}
 		if oldRa == nil {
-			if err = object.AddRadiusAccounting(newRa); err != nil {
-				return
+			if stop {
+				newRa.AcctStopTime = time.Now()
 			}
+			err = object.AddRadiusAccounting(newRa)
+			return
 		}
-		stop := statusType == rfc2866.AcctStatusType_Value_Stop
 		err = object.InterimUpdateRadiusAccounting(oldRa, newRa, stop)
 	case rfc2866.AcctStatusType_Value_AccountingOn, rfc2866.AcctStatusType_Value_AccountingOff:
 		// By default, no Accounting-On or Accounting-Off messages are sent (no acct-on-off).
 	default:
 		err = fmt.Errorf("unsupport statusType = %v", statusType)
 	}
+}
+
+func getRadiusClientName(client *object.RadiusClient) string {
+	if client == nil {
+		return ""
+	}
+	return client.Name
+}
+
+func getAccountingRecord(r *radius.Request, organization string, username string) *object.RadiusAccounting {
+	ra := GetAccountingFromRequest(r)
+	ra.Owner = organization
+	ra.Username = username
+	return ra
 }

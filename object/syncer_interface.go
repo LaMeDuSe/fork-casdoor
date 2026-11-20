@@ -23,6 +23,8 @@ type OriginalGroup struct {
 	Type        string
 	Manager     string
 	Email       string
+	// ParentId is the Name of the parent group, empty for a top group
+	ParentId string
 }
 
 // SyncerProvider defines the interface that all syncer implementations must satisfy.
@@ -70,8 +72,15 @@ func GetSyncerProvider(syncer *Syncer) SyncerProvider {
 		return &LarkSyncerProvider{Syncer: syncer}
 	case "Okta":
 		return &OktaSyncerProvider{Syncer: syncer}
+	case "Plugin":
+		if NewPluginSyncerProviderHook != nil {
+			return NewPluginSyncerProviderHook(syncer)
+		}
+		return &DatabaseSyncerProvider{Syncer: syncer}
 	case "SCIM":
 		return &SCIMSyncerProvider{Syncer: syncer}
+	case "AWS IAM":
+		return &AwsIamSyncerProvider{Syncer: syncer}
 	case "Keycloak":
 		return &KeycloakSyncerProvider{
 			DatabaseSyncerProvider: DatabaseSyncerProvider{Syncer: syncer},
@@ -79,5 +88,18 @@ func GetSyncerProvider(syncer *Syncer) SyncerProvider {
 	default:
 		// Default to database syncer for "Database" type and any others
 		return &DatabaseSyncerProvider{Syncer: syncer}
+	}
+}
+
+func (syncer *Syncer) writesUsersBack() bool {
+	if syncer.IsReadOnly {
+		return false
+	}
+
+	switch GetSyncerProvider(syncer).(type) {
+	case *DatabaseSyncerProvider, *KeycloakSyncerProvider:
+		return true
+	default:
+		return false
 	}
 }

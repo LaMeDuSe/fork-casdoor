@@ -1,0 +1,1175 @@
+// Copyright 2026 The Casdoor Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package object
+
+import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html"
+	"net/url"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/casdoor/casdoor/action"
+	"github.com/casdoor/casdoor/conf"
+	"github.com/casdoor/casdoor/edition"
+	"github.com/casdoor/casdoor/util"
+	"github.com/xorm-io/core"
+)
+
+const (
+	defaultMarketplaceUrl = "https://cdn.jsdelivr.net/gh/casdoor/casdoor-integrations@dist"
+	// the same catalog served from mainland China, where jsDelivr is often unreachable
+	fallbackMarketplaceUrl = "https://marketplace.casdoor.cn/data"
+)
+
+type MarketplaceVersion struct {
+	Version        string `json:"version"`
+	CasdoorVersion string `json:"casdoorVersion"`
+	Url            string `json:"url"`
+	Sha256         string `json:"sha256"`
+	PublishedAt    string `json:"publishedAt"`
+}
+
+type MarketplaceIntegration struct {
+	Id                  string            `json:"id"`
+	Type                string            `json:"type"`
+	Name                map[string]string `json:"name"`
+	Description         map[string]string `json:"description"`
+	Author              string            `json:"author"`
+	License             string            `json:"license"`
+	Homepage            string            `json:"homepage"`
+	Tags                []string          `json:"tags"`
+	Categories          []string          `json:"categories"`
+	Logo                string            `json:"logo"`
+	Screenshots         []string          `json:"screenshots"`
+	Verified            bool              `json:"verified"`
+	RequiresGlobalAdmin bool              `json:"requiresGlobalAdmin"`
+	Region              string            `json:"region"`
+	Edition             string            `json:"edition"`
+	// where the files of a paid integration are, the Marketplace server rather than the CDN
+	BaseUrl string `json:"baseUrl,omitempty"`
+	// the paid integration can be downloaded with this Casdoor's license
+	Licensed bool                  `json:"licensed,omitempty"`
+	Latest   string                `json:"latest"`
+	Versions []*MarketplaceVersion `json:"versions"`
+}
+
+type MarketplaceRevoked struct {
+	Id      string `json:"id"`
+	Version string `json:"version"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+type MarketplaceIndex struct {
+	SchemaVersion int                       `json:"schemaVersion"`
+	GeneratedAt   string                    `json:"generatedAt"`
+	BaseUrl       string                    `json:"baseUrl"`
+	Integrations  []*MarketplaceIntegration `json:"integrations"`
+	Revoked       []*MarketplaceRevoked     `json:"revoked"`
+}
+
+type IntegrationVariable struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
+}
+
+type IntegrationPermissions struct {
+	Hosts []string `json:"hosts"`
+}
+
+type IntegrationManifest struct {
+	Id          string                  `json:"id"`
+	Type        string                  `json:"type"`
+	Version     string                  `json:"version"`
+	Name        map[string]string       `json:"name"`
+	Variables   []*IntegrationVariable  `json:"variables"`
+	Permissions *IntegrationPermissions `json:"permissions"`
+	// the files an admin downloads to install elsewhere, such as the plugin of an API gateway
+	Downloads []string `json:"downloads"`
+}
+
+type IntegrationBundle struct {
+	Manifest *IntegrationManifest       `json:"manifest"`
+	Files    map[string]json.RawMessage `json:"files"`
+	// the license a paid integration was downloaded with, written into it by the Marketplace server
+	License *BundleLicense `json:"license,omitempty"`
+
+	// the directory the bundle was downloaded from, where the other files of the version are
+	baseUrl string
+	// a paid integration, whose files are downloaded with the license
+	isPaid bool
+	// installed from a file: the other files of the version were uploaded with the bundle
+	isLocal    bool
+	localFiles map[string][]byte
+}
+
+type BundleLicense struct {
+	Id       string `json:"id"`
+	Licensee string `json:"licensee"`
+}
+
+// fetch downloads another file of the version
+func (bundle *IntegrationBundle) Fetch(path string) ([]byte, error) {
+	if bundle.isLocal {
+		data, ok := bundle.localFiles[path]
+		if !ok {
+			return nil, fmt.Errorf("choose %s together with bundle.json", path)
+		}
+		return data, nil
+	}
+	return FetchMarketplaceFileWithLicense(fmt.Sprintf("%s/%s", bundle.baseUrl, path), bundle.isPaid)
+}
+
+// actionFile is the action.json of an action: what it does and the module that does it
+type actionFile struct {
+	Kind   string `json:"kind"`
+	Abi    int    `json:"abi"`
+	Module string `json:"module"`
+	Sha256 string `json:"sha256"`
+	// push only: the user field that holds the receiver
+	ReceiverField string `json:"receiverField"`
+}
+
+// the kinds of actions this Casdoor runs, and the provider category each one creates on install ("" for none)
+var actionKindCategories = map[string]string{
+	"payment":            "Payment",
+	"sms":                "SMS",
+	"push":               "Notification",
+	"syncer":             "",
+	"password-check":     "",
+	"password-migration": "",
+	"idp":                "OAuth",
+	"idv":                "ID Verification",
+	"cert":               "",
+}
+
+type IntegrationInstallRequest struct {
+	Owner         string            `json:"owner"`
+	Name          string            `json:"name"`
+	IntegrationId string            `json:"integrationId"`
+	Version       string            `json:"version"`
+	Variables     map[string]string `json:"variables"`
+	// theme: the application to restyle; provider: the application to add the provider to, optional
+	Application string `json:"application"`
+	// provider: the client the other identity provider issued
+	ClientId     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+	// installing from a file instead of the Marketplace: the bundle.json and, for an action, its module in base64
+	Bundle string `json:"bundle"`
+	Module string `json:"module"`
+}
+
+type applicationTemplate struct {
+	RedirectUris     []string `json:"redirectUris"`
+	GrantTypes       []string `json:"grantTypes"`
+	TokenFormat      string   `json:"tokenFormat"`
+	TokenGroupFormat string   `json:"tokenGroupFormat"`
+	// Agent makes the application the OAuth client of an AI agent of the same name, so its tokens carry the agent
+	Agent bool `json:"agent"`
+}
+
+type themeFields struct {
+	ThemeData     *ThemeData `json:"themeData"`
+	FormOffset    int        `json:"formOffset"`
+	FormCss       string     `json:"formCss"`
+	FormCssMobile string     `json:"formCssMobile"`
+	FormSideHtml  string     `json:"formSideHtml"`
+	FooterHtml    string     `json:"footerHtml"`
+
+	FormBackgroundUrl       string `json:"formBackgroundUrl"`
+	FormBackgroundUrlMobile string `json:"formBackgroundUrlMobile"`
+}
+
+var themeColumns = []string{"theme_data", "form_offset", "form_css", "form_css_mobile", "form_side_html", "footer_html", "form_background_url", "form_background_url_mobile"}
+
+var (
+	marketplaceIndexMutex sync.Mutex
+	marketplaceIndexCache *MarketplaceIndex
+	marketplaceIndexTime  time.Time
+)
+
+var (
+	variablePattern    = regexp.MustCompile(`\{\{\s*([a-zA-Z][a-zA-Z0-9]*)\s*\}\}`)
+	colorPattern       = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+	installNameRegex   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+	integrationIdRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+)
+
+func getMarketplaceUrls() []string {
+	marketplaceUrl := conf.GetConfigString("marketplaceUrl")
+	if marketplaceUrl == "" {
+		return []string{defaultMarketplaceUrl, fallbackMarketplaceUrl}
+	}
+	return []string{strings.TrimSuffix(marketplaceUrl, "/")}
+}
+
+func JoinMarketplaceUrl(baseUrl string, path string) string {
+	if path == "" || strings.HasPrefix(path, "https://") || strings.HasPrefix(path, "http://") {
+		return path
+	}
+	return fmt.Sprintf("%s/%s", baseUrl, strings.TrimPrefix(path, "/"))
+}
+
+// GetMarketplaceIndex returns the catalog of the Marketplace with logos and screenshots as absolute URLs.
+func GetMarketplaceIndex(refresh bool) (*MarketplaceIndex, error) {
+	marketplaceIndexMutex.Lock()
+	defer marketplaceIndexMutex.Unlock()
+
+	if !refresh && marketplaceIndexCache != nil && time.Since(marketplaceIndexTime) < 10*time.Minute {
+		return marketplaceIndexCache, nil
+	}
+
+	var baseUrl string
+	var data []byte
+	var err error
+	for _, baseUrl = range getMarketplaceUrls() {
+		data, err = FetchMarketplaceFile(baseUrl + "/index.json")
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	index := &MarketplaceIndex{}
+	err = json.Unmarshal(data, index)
+	if err != nil {
+		return nil, err
+	}
+
+	index.BaseUrl = baseUrl
+	for _, item := range index.Integrations {
+		item.Logo = JoinMarketplaceUrl(baseUrl, item.Logo)
+		for i, screenshot := range item.Screenshots {
+			item.Screenshots[i] = JoinMarketplaceUrl(baseUrl, screenshot)
+		}
+	}
+	mergePaidIntegrations(index)
+
+	marketplaceIndexCache = index
+	marketplaceIndexTime = time.Now()
+	return index, nil
+}
+
+// GetMarketplaceIndexForLanguage leaves out the integrations of the Chinese Marketplace, such as sign-in with
+// platforms only used in China, unless the admin uses Casdoor in Chinese.
+// It is what the Marketplace page shows, so it also reads the versions withdrawn right now from the Marketplace server.
+func GetMarketplaceIndexForLanguage(refresh bool, lang string) (*MarketplaceIndex, error) {
+	index, err := GetMarketplaceIndex(refresh)
+	if err != nil {
+		return nil, err
+	}
+	refreshMarketplaceStatus()
+
+	res := *index
+	res.Revoked = append([]*MarketplaceRevoked{}, index.Revoked...)
+	for _, revoked := range getMarketplaceServerRevoked() {
+		if findRevoked(index.Revoked, revoked.Id, revoked.Version) == nil {
+			res.Revoked = append(res.Revoked, revoked)
+		}
+	}
+	if strings.HasPrefix(lang, "zh") {
+		return &res, nil
+	}
+
+	res.Integrations = []*MarketplaceIntegration{}
+	for _, item := range index.Integrations {
+		if item.Region != "cn" {
+			res.Integrations = append(res.Integrations, item)
+		}
+	}
+	return &res, nil
+}
+
+func GetMarketplaceIntegration(id string) (*MarketplaceIntegration, error) {
+	index, err := GetMarketplaceIndex(false)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range index.Integrations {
+		if item.Id == id {
+			return item, nil
+		}
+	}
+	return nil, fmt.Errorf("the integration: %s is not in the Marketplace", id)
+}
+
+func findRevoked(list []*MarketplaceRevoked, id string, version string) *MarketplaceRevoked {
+	for _, revoked := range list {
+		if revoked.Id == id && (revoked.Version == "" || revoked.Version == version) {
+			return revoked
+		}
+	}
+	return nil
+}
+
+// getIntegrationRevoked returns the withdrawal of a version in the index or, as of the last time the Marketplace page
+// was opened, on the Marketplace server, or nil when it is not withdrawn
+func getIntegrationRevoked(index *MarketplaceIndex, id string, version string) *MarketplaceRevoked {
+	revoked := findRevoked(getMarketplaceServerRevoked(), id, version)
+	if revoked == nil {
+		revoked = findRevoked(index.Revoked, id, version)
+	}
+	return revoked
+}
+
+// getIntegrationBundle downloads the bundle of a version and checks it. It first checks with the Marketplace server
+// that the version is still published and what checksum the bundle must have, and downloads the bundle from the server
+// when the CDN copy does not have it. For an install, it also returns the version it checked with the server, or ""
+// when it did not; otherwise it is an admin opening the integration in the Marketplace page.
+func GetIntegrationBundle(item *MarketplaceIntegration, version string, forInstall bool) (*IntegrationBundle, string, string, error) {
+	index, err := GetMarketplaceIndex(false)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if version == "" {
+		version = item.Latest
+	}
+	// the official Marketplace server, when it can be reached, says itself whether the version is withdrawn
+	var revokedErr error
+	if revoked := getIntegrationRevoked(index, item.Id, version); revoked != nil {
+		revokedErr = fmt.Errorf("the integration: %s %s has been withdrawn from the Marketplace", item.Id, version)
+		if revoked.Reason != "" {
+			revokedErr = fmt.Errorf("%w: %s", revokedErr, revoked.Reason)
+		}
+	}
+
+	var marketplaceVersion *MarketplaceVersion
+	for _, v := range item.Versions {
+		if v.Version == version {
+			marketplaceVersion = v
+		}
+	}
+	if revokedErr != nil && (marketplaceVersion == nil || !isOfficialMarketplace(item)) {
+		return nil, "", "", revokedErr
+	}
+	if marketplaceVersion == nil {
+		return nil, "", "", fmt.Errorf("the integration: %s has no version %s", item.Id, version)
+	}
+
+	baseUrl := index.BaseUrl
+	if item.BaseUrl != "" {
+		baseUrl = item.BaseUrl
+	}
+	expectedSha256 := marketplaceVersion.Sha256
+	var meta *MarketplaceVersionMeta
+	serverUrl := ""
+	checkedVersion := ""
+	if isOfficialMarketplace(item) {
+		step := marketplaceStepView
+		if forInstall {
+			step = ""
+		}
+		meta, serverUrl = getMarketplaceVersionMeta(item, marketplaceVersion, step)
+		if meta != nil && forInstall {
+			checkedVersion = version
+		}
+		if meta != nil {
+			if meta.Status == "Revoked" {
+				if meta.Reason != "" {
+					return nil, "", checkedVersion, IntegrationRevokedError{fmt.Errorf("the integration: %s %s has been withdrawn from the Marketplace: %s", item.Id, version, meta.Reason)}
+				}
+				return nil, "", checkedVersion, IntegrationRevokedError{fmt.Errorf("the integration: %s %s has been withdrawn from the Marketplace", item.Id, version)}
+			}
+			if meta.Sha256 != "" {
+				expectedSha256 = meta.Sha256
+			}
+		}
+	}
+	if meta == nil && revokedErr != nil {
+		return nil, "", "", revokedErr
+	}
+
+	bundleUrl := JoinMarketplaceUrl(baseUrl, marketplaceVersion.Url)
+	data, err := FetchMarketplaceFileWithLicense(bundleUrl, item.Edition != "")
+	if err == nil && !isSha256(data, expectedSha256) && meta != nil && baseUrl != serverUrl {
+		// the CDN copy is stale or not what was published, the Marketplace server has the published one
+		bundleUrl = JoinMarketplaceUrl(serverUrl, marketplaceVersion.Url)
+		data, err = FetchMarketplaceFileWithLicense(bundleUrl, item.Edition != "")
+	}
+	if err != nil {
+		return nil, "", checkedVersion, err
+	}
+	if !isSha256(data, expectedSha256) {
+		return nil, "", checkedVersion, fmt.Errorf("the checksum of %s %s does not match the Marketplace index", item.Id, version)
+	}
+
+	bundle := &IntegrationBundle{}
+	err = json.Unmarshal(data, bundle)
+	if err != nil {
+		return nil, "", checkedVersion, err
+	}
+	if bundle.Manifest == nil || bundle.Manifest.Id != item.Id || bundle.Manifest.Type != item.Type || bundle.Manifest.Version != version {
+		return nil, "", checkedVersion, fmt.Errorf("the bundle of %s %s does not match the Marketplace index", item.Id, version)
+	}
+	bundle.baseUrl = bundleUrl[:strings.LastIndex(bundleUrl, "/")]
+	bundle.isPaid = item.Edition != ""
+
+	return bundle, string(data), checkedVersion, nil
+}
+
+func isSha256(data []byte, expected string) bool {
+	hash := sha256.Sum256(data)
+	return strings.EqualFold(hex.EncodeToString(hash[:]), expected)
+}
+
+// GetMarketplaceBundle returns the manifest and content files of an integration version, checked against the index.
+func GetMarketplaceBundle(id string, version string) (json.RawMessage, error) {
+	item, err := GetMarketplaceIntegration(id)
+	if err != nil {
+		return nil, err
+	}
+
+	_, bundleText, _, err := GetIntegrationBundle(item, version, false)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(bundleText), nil
+}
+
+// GetInstallIntegrationType returns the type of the integration a request installs
+func GetInstallIntegrationType(req *IntegrationInstallRequest) (string, error) {
+	if req.Bundle != "" {
+		bundle, err := parseLocalBundle(req.Bundle)
+		if err != nil {
+			return "", err
+		}
+		return bundle.Manifest.Type, nil
+	}
+
+	item, err := GetMarketplaceIntegration(req.IntegrationId)
+	if err != nil {
+		return "", err
+	}
+	return item.Type, nil
+}
+
+func parseLocalBundle(text string) (*IntegrationBundle, error) {
+	bundle := &IntegrationBundle{}
+	err := json.Unmarshal([]byte(text), bundle)
+	manifest := bundle.Manifest
+	if err != nil || manifest == nil || !integrationIdRegex.MatchString(manifest.Id) || manifest.Version == "" {
+		return nil, fmt.Errorf("the file is not the bundle.json of an integration")
+	}
+	if bundle.License != nil {
+		return nil, fmt.Errorf("the integration: %s was downloaded with the license of a Casdoor, install it from the Marketplace", manifest.Id)
+	}
+	return bundle, nil
+}
+
+// getLocalIntegration reads an integration that isn't in the Marketplace, such as one written for this Casdoor
+// alone, from the bundle.json its build wrote and, for an action, the module next to it
+func getLocalIntegration(req *IntegrationInstallRequest) (*MarketplaceIntegration, *IntegrationBundle, error) {
+	bundle, err := parseLocalBundle(req.Bundle)
+	if err != nil {
+		return nil, nil, err
+	}
+	manifest := bundle.Manifest
+
+	// the paid integrations of the Marketplace need the license however they are installed
+	index, err := GetMarketplaceIndex(false)
+	if err == nil {
+		for _, item := range index.Integrations {
+			if item.Id == manifest.Id && item.Edition != "" {
+				err = edition.Require(item.Edition, edition.FeaturePaidIntegrations)
+				if err != nil {
+					return nil, nil, fmt.Errorf("%s: %w", item.Id, err)
+				}
+			}
+		}
+	}
+
+	bundle.isLocal = true
+	bundle.localFiles = map[string][]byte{}
+	if manifest.Type == "action" && req.Module != "" {
+		file, err := getActionFile(bundle)
+		if err != nil {
+			return nil, nil, err
+		}
+		module, err := base64.StdEncoding.DecodeString(req.Module)
+		if err != nil {
+			return nil, nil, fmt.Errorf("the module of the action is not valid base64")
+		}
+		bundle.localFiles[file.Module] = module
+	}
+
+	item := &MarketplaceIntegration{
+		Id:          manifest.Id,
+		Type:        manifest.Type,
+		Name:        manifest.Name,
+		Description: map[string]string{},
+		Latest:      manifest.Version,
+	}
+	return item, bundle, nil
+}
+
+func getIntegrationVariables(bundle *IntegrationBundle, input map[string]string) (map[string]string, error) {
+	res := map[string]string{}
+	for _, variable := range bundle.Manifest.Variables {
+		value := strings.TrimSpace(input[variable.Name])
+		if value == "" {
+			if variable.Required {
+				return nil, fmt.Errorf("%s is required", variable.Name)
+			}
+			res[variable.Name] = ""
+			continue
+		}
+
+		switch variable.Type {
+		case "url":
+			value = strings.TrimRight(value, "/")
+			u, err := url.Parse(value)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.ContainsAny(value, " \"'<>`") {
+				return nil, fmt.Errorf("%s is not a valid http(s) URL: %s", variable.Name, value)
+			}
+		case "color":
+			if !colorPattern.MatchString(value) {
+				return nil, fmt.Errorf("%s is not a #rrggbb color: %s", variable.Name, value)
+			}
+		default:
+			if len(value) > 500 {
+				return nil, fmt.Errorf("%s is too long", variable.Name)
+			}
+		}
+		res[variable.Name] = value
+	}
+	return res, nil
+}
+
+func replaceIntegrationVariables(value interface{}, variables map[string]string, escape func(string) string) interface{} {
+	switch v := value.(type) {
+	case string:
+		return variablePattern.ReplaceAllStringFunc(v, func(match string) string {
+			name := variablePattern.FindStringSubmatch(match)[1]
+			if res, ok := variables[name]; ok {
+				return escape(res)
+			}
+			return match
+		})
+	case map[string]interface{}:
+		for key, item := range v {
+			v[key] = replaceIntegrationVariables(item, variables, escape)
+		}
+	case []interface{}:
+		for i, item := range v {
+			v[i] = replaceIntegrationVariables(item, variables, escape)
+		}
+	}
+	return value
+}
+
+// renderIntegrationFile fills the {{variables}} of a content file into out. Values going into HTML fields
+// are escaped, values going into CSS must not be able to leave the declaration they are in.
+func renderIntegrationFile(bundle *IntegrationBundle, file string, variables map[string]string, out interface{}) error {
+	raw, ok := bundle.Files[file]
+	if !ok {
+		return fmt.Errorf("the integration has no %s", file)
+	}
+
+	var data map[string]interface{}
+	err := json.Unmarshal(raw, &data)
+	if err != nil {
+		return err
+	}
+
+	var cssErr error
+	for key, value := range data {
+		escape := func(s string) string { return s }
+		if strings.HasSuffix(key, "Html") {
+			escape = html.EscapeString
+		} else if strings.HasPrefix(key, "formCss") || key == "themeData" {
+			escape = func(s string) string {
+				if strings.ContainsAny(s, "<>{};\\\"'@\r\n") {
+					cssErr = fmt.Errorf("the value %q cannot be used in a stylesheet", s)
+				}
+				return s
+			}
+		}
+		data[key] = replaceIntegrationVariables(value, variables, escape)
+	}
+	if cssErr != nil {
+		return cssErr
+	}
+
+	rendered, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(rendered, out)
+}
+
+func getIntegrationApplication(owner string, name string, isGlobalAdmin bool) (*Application, error) {
+	application, err := getApplication("admin", name)
+	if err != nil {
+		return nil, err
+	}
+	if application == nil {
+		return nil, fmt.Errorf("the application: %s does not exist", name)
+	}
+	if application.Organization != owner && !isGlobalAdmin {
+		return nil, fmt.Errorf("the application: %s does not belong to the organization: %s", name, owner)
+	}
+	return application, nil
+}
+
+func installAppIntegration(integration *Integration, bundle *IntegrationBundle, variables map[string]string, lang string) error {
+	template := applicationTemplate{}
+	err := renderIntegrationFile(bundle, "application.json", variables, &template)
+	if err != nil {
+		return err
+	}
+
+	existing, err := getApplication("admin", integration.Name)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return fmt.Errorf("an application named %s already exists, choose another name", integration.Name)
+	}
+	if template.Agent {
+		existingAgent, err := getAgent(integration.Owner, integration.Name)
+		if err != nil {
+			return err
+		}
+		if existingAgent != nil {
+			return fmt.Errorf("an agent named %s already exists, choose another name", integration.Name)
+		}
+	}
+
+	grantTypes := template.GrantTypes
+	if len(grantTypes) == 0 {
+		grantTypes = []string{"authorization_code", "refresh_token"}
+	}
+	logo := integration.Logo
+	if logo == "" {
+		logo = fmt.Sprintf("%s/img/casdoor-logo_1185x256.png", conf.GetConfigString("staticBaseUrl"))
+	}
+
+	application := &Application{
+		Owner:                "admin",
+		Name:                 integration.Name,
+		CreatedTime:          util.GetCurrentTime(),
+		DisplayName:          integration.DisplayName,
+		Category:             "Default",
+		Type:                 "All",
+		Logo:                 logo,
+		HomepageUrl:          variables["appUrl"],
+		Organization:         integration.Owner,
+		Cert:                 "cert-built-in",
+		EnablePassword:       true,
+		EnableSignUp:         true,
+		Providers:            []*ProviderItem{},
+		Scopes:               []*ScopeItem{},
+		Tags:                 []string{},
+		GrantTypes:           grantTypes,
+		RedirectUris:         template.RedirectUris,
+		TokenFormat:          template.TokenFormat,
+		TokenGroupFormat:     template.TokenGroupFormat,
+		ExpireInHours:        24 * 7,
+		RefreshExpireInHours: 24 * 7,
+		CookieExpireInHours:  24 * 30,
+		FormOffset:           2,
+	}
+	affected, err := AddApplication(application, lang)
+	if err != nil {
+		return err
+	}
+	if !affected {
+		return fmt.Errorf("failed to add the application: %s", integration.Name)
+	}
+
+	integration.Application = application.Name
+
+	if template.Agent {
+		agent := &Agent{
+			Owner:       integration.Owner,
+			Name:        integration.Name,
+			CreatedTime: util.GetCurrentTime(),
+			DisplayName: integration.DisplayName,
+			Url:         variables["appUrl"],
+			Application: application.Name,
+		}
+		_, err = AddAgent(agent)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func installProviderIntegration(integration *Integration, bundle *IntegrationBundle, variables map[string]string, req *IntegrationInstallRequest, isGlobalAdmin bool, lang string) error {
+	if req.ClientId == "" || req.ClientSecret == "" {
+		return fmt.Errorf("the client ID and client secret are required")
+	}
+
+	var application *Application
+	var err error
+	if req.Application != "" {
+		application, err = getIntegrationApplication(integration.Owner, req.Application, isGlobalAdmin)
+		if err != nil {
+			return err
+		}
+	}
+
+	provider := &Provider{}
+	err = renderIntegrationFile(bundle, "provider.json", variables, provider)
+	if err != nil {
+		return err
+	}
+
+	existing := &Provider{Name: integration.Name}
+	existed, err := ormer.Engine.Get(existing)
+	if err != nil {
+		return err
+	}
+	if existed {
+		return fmt.Errorf("a provider named %s already exists, choose another name", integration.Name)
+	}
+
+	provider.Owner = integration.Owner
+	provider.Name = integration.Name
+	provider.CreatedTime = util.GetCurrentTime()
+	provider.Method = "Normal"
+	provider.ClientId = req.ClientId
+	provider.ClientSecret = req.ClientSecret
+	provider.CustomLogo = integration.Logo
+	affected, err := AddProvider(provider)
+	if err != nil {
+		return err
+	}
+	if !affected {
+		return fmt.Errorf("failed to add the provider: %s", integration.Name)
+	}
+	integration.Provider = provider.Name
+
+	if application != nil {
+		application.Providers = append(application.Providers, &ProviderItem{
+			Owner:     provider.Owner,
+			Name:      provider.Name,
+			CanSignUp: true,
+			CanSignIn: true,
+			CanUnlink: true,
+			Rule:      "None",
+		})
+		_, err = UpdateApplication(application.GetId(), application, isGlobalAdmin, lang, []string{"providers"})
+		if err != nil {
+			return err
+		}
+		integration.Application = application.Name
+	}
+	return nil
+}
+
+func getActionFile(bundle *IntegrationBundle) (*actionFile, error) {
+	raw, ok := bundle.Files["action.json"]
+	if !ok {
+		return nil, fmt.Errorf("the action has no action.json")
+	}
+
+	file := &actionFile{}
+	err := json.Unmarshal(raw, file)
+	if err != nil {
+		return nil, err
+	}
+	if file.Abi != action.Abi {
+		return nil, fmt.Errorf("the action is built for abi %d, this Casdoor runs abi %d", file.Abi, action.Abi)
+	}
+	if _, ok := actionKindCategories[file.Kind]; !ok {
+		return nil, fmt.Errorf("this Casdoor cannot run actions of kind: %s", file.Kind)
+	}
+	if file.Module == "" || strings.ContainsAny(file.Module, "/\\") || file.Sha256 == "" {
+		return nil, fmt.Errorf("the action.json of the action has no valid module")
+	}
+	return file, nil
+}
+
+func installActionIntegration(integration *Integration, bundle *IntegrationBundle, req *IntegrationInstallRequest) error {
+	file, err := getActionFile(bundle)
+	if err != nil {
+		return err
+	}
+
+	module, err := bundle.Fetch(file.Module)
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(module)
+	if !strings.EqualFold(hex.EncodeToString(hash[:]), file.Sha256) {
+		return fmt.Errorf("the checksum of %s does not match the action", file.Module)
+	}
+	err = action.Check(module)
+	if err != nil {
+		return err
+	}
+
+	integration.Kind = file.Kind
+	integration.Module = base64.StdEncoding.EncodeToString(module)
+
+	// the syncers and the security settings of the organization pick these actions themselves
+	category := actionKindCategories[file.Kind]
+	if category == "" {
+		return nil
+	}
+
+	existing := &Provider{Name: integration.Name}
+	existed, err := ormer.Engine.Get(existing)
+	if err != nil {
+		return err
+	}
+	if existed {
+		return fmt.Errorf("a provider named %s already exists, choose another name", integration.Name)
+	}
+
+	provider := &Provider{
+		Owner:        integration.Owner,
+		Name:         integration.Name,
+		CreatedTime:  util.GetCurrentTime(),
+		DisplayName:  integration.DisplayName,
+		Category:     category,
+		Type:         ProviderTypePlugin,
+		SubType:      integration.Name,
+		Method:       "Normal",
+		ClientId:     req.ClientId,
+		ClientSecret: req.ClientSecret,
+		CustomLogo:   integration.Logo,
+	}
+	affected, err := AddProvider(provider)
+	if err != nil {
+		return err
+	}
+	if !affected {
+		return fmt.Errorf("failed to add the provider: %s", integration.Name)
+	}
+
+	integration.Provider = provider.Name
+	return nil
+}
+
+// getActionModule returns the module and allowed hosts of the action a provider of type Plugin runs.
+func getActionModule(owner string, name string) ([]byte, []string, error) {
+	integration, err := getIntegration(owner, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	if integration == nil || integration.Type != "action" || integration.Module == "" {
+		return nil, nil, fmt.Errorf("the action: %s is not installed in %s", name, owner)
+	}
+
+	module, err := base64.StdEncoding.DecodeString(integration.Module)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	bundle := &IntegrationBundle{}
+	err = json.Unmarshal([]byte(integration.Bundle), bundle)
+	if err != nil {
+		return nil, nil, err
+	}
+	hosts := []string{}
+	if bundle.Manifest != nil && bundle.Manifest.Permissions != nil {
+		hosts = bundle.Manifest.Permissions.Hosts
+	}
+	return module, hosts, nil
+}
+
+func installThemeIntegration(integration *Integration, item *MarketplaceIntegration, bundle *IntegrationBundle, variables map[string]string, req *IntegrationInstallRequest, isGlobalAdmin bool, lang string) error {
+	if req.Application == "" {
+		return fmt.Errorf("choose the application to apply the theme to")
+	}
+
+	application, err := getIntegrationApplication(integration.Owner, req.Application, isGlobalAdmin)
+	if err != nil {
+		return err
+	}
+
+	installed := []*Integration{}
+	err = ormer.Engine.Find(&installed, &Integration{Type: "theme", Application: application.Name})
+	if err != nil {
+		return err
+	}
+	if len(installed) > 0 {
+		return fmt.Errorf("the application: %s already has the theme: %s, uninstall it first", application.Name, installed[0].Name)
+	}
+
+	theme := themeFields{}
+	err = renderIntegrationFile(bundle, "theme.json", variables, &theme)
+	if err != nil {
+		return err
+	}
+
+	// refuse the theme by its own name, before the application's save refuses it by field
+	if !isGlobalAdmin {
+		prefixes := getCssUrlPrefixes()
+		isSafe := isCssSafeFor(theme.FormCss, prefixes) && isCssSafeFor(theme.FormCssMobile, prefixes) &&
+			isHtmlSafeFor(theme.FormSideHtml, prefixes) && isHtmlSafeFor(theme.FooterHtml, prefixes)
+		if !isSafe {
+			return fmt.Errorf("the theme: %s uses HTML or loads files that this Casdoor only lets a global admin set", item.Id)
+		}
+	}
+
+	backup, err := json.Marshal(themeFields{
+		ThemeData:     application.ThemeData,
+		FormOffset:    application.FormOffset,
+		FormCss:       application.FormCss,
+		FormCssMobile: application.FormCssMobile,
+		FormSideHtml:  application.FormSideHtml,
+		FooterHtml:    application.FooterHtml,
+
+		FormBackgroundUrl:       application.FormBackgroundUrl,
+		FormBackgroundUrlMobile: application.FormBackgroundUrlMobile,
+	})
+	if err != nil {
+		return err
+	}
+
+	setApplicationTheme(application, &theme)
+	_, err = UpdateApplication(application.GetId(), application, isGlobalAdmin, lang, themeColumns)
+	if err != nil {
+		return err
+	}
+
+	integration.Application = application.Name
+	integration.Backup = string(backup)
+	return nil
+}
+
+func setApplicationTheme(application *Application, theme *themeFields) {
+	application.ThemeData = theme.ThemeData
+	application.FormOffset = theme.FormOffset
+	application.FormCss = theme.FormCss
+	application.FormCssMobile = theme.FormCssMobile
+	application.FormSideHtml = theme.FormSideHtml
+	application.FooterHtml = theme.FooterHtml
+	application.FormBackgroundUrl = theme.FormBackgroundUrl
+	application.FormBackgroundUrlMobile = theme.FormBackgroundUrlMobile
+}
+
+// InstallIntegration downloads an integration from the Marketplace, checks it against the index and creates
+// the application or provider it describes, or applies the theme to an application.
+func InstallIntegration(req *IntegrationInstallRequest, isGlobalAdmin bool, host string, lang string) (*Integration, error) {
+	if req.Owner == "" || !installNameRegex.MatchString(req.Name) {
+		return nil, fmt.Errorf("the name may only contain letters, digits, - and _")
+	}
+
+	organization, err := getOrganization("admin", req.Owner)
+	if err != nil {
+		return nil, err
+	}
+	if organization == nil {
+		return nil, fmt.Errorf("the organization: %s does not exist", req.Owner)
+	}
+
+	existing, err := getIntegration(req.Owner, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, fmt.Errorf("an integration named %s is already installed in %s", req.Name, req.Owner)
+	}
+
+	var item *MarketplaceIntegration
+	var bundle *IntegrationBundle
+	var bundleText string
+	checkedVersion := ""
+	source := ""
+	// once the Marketplace server has checked the version, it is told how the install ended
+	fail := func(stage string, err error) (*Integration, error) {
+		if checkedVersion != "" {
+			ReadMarketplaceVersionMetaStep(item.Id, checkedVersion, item.Edition != "", MarketplaceStepFailed, stage)
+		}
+		return nil, err
+	}
+	if req.Bundle != "" {
+		// it runs on this Casdoor without the review of the Marketplace, so only who runs Casdoor decides
+		if !isGlobalAdmin {
+			return nil, fmt.Errorf("only a global admin can install an integration from a file")
+		}
+		item, bundle, err = getLocalIntegration(req)
+		if err != nil {
+			return nil, err
+		}
+		bundleText = req.Bundle
+		source = "file"
+	} else {
+		item, err = GetMarketplaceIntegration(req.IntegrationId)
+		if err != nil {
+			return nil, err
+		}
+		// e.g. the templates of Chinese office systems need a commercial edition license
+		if item.Edition != "" {
+			if err = edition.Require(item.Edition, edition.FeaturePaidIntegrations); err != nil {
+				return nil, fmt.Errorf("%s: %w", item.Id, err)
+			}
+		}
+
+		bundle, bundleText, checkedVersion, err = GetIntegrationBundle(item, req.Version, true)
+		if err != nil {
+			if errors.As(err, &IntegrationRevokedError{}) {
+				return fail(InstallStageRevoked, err)
+			}
+			return fail(InstallStageDownload, err)
+		}
+	}
+
+	variables, err := getIntegrationVariables(bundle, req.Variables)
+	if err != nil {
+		return fail(installStageVariables, err)
+	}
+	_, originBackend := GetOriginFromHost(host)
+	variables["casdoorUrl"] = originBackend
+
+	displayName := bundle.Manifest.Name["en"]
+	if displayName == "" {
+		displayName = item.Id
+	}
+
+	integration := &Integration{
+		Owner:         req.Owner,
+		Name:          req.Name,
+		CreatedTime:   util.GetCurrentTime(),
+		UpdatedTime:   util.GetCurrentTime(),
+		DisplayName:   displayName,
+		IntegrationId: item.Id,
+		Source:        source,
+		Type:          item.Type,
+		Version:       bundle.Manifest.Version,
+		Logo:          item.Logo,
+		Variables:     variables,
+		Bundle:        bundleText,
+	}
+	if bundle.License != nil {
+		integration.LicenseId = bundle.License.Id
+	}
+
+	switch item.Type {
+	case "app":
+		err = installAppIntegration(integration, bundle, variables, lang)
+	case "provider":
+		err = installProviderIntegration(integration, bundle, variables, req, isGlobalAdmin, lang)
+	case "theme":
+		err = installThemeIntegration(integration, item, bundle, variables, req, isGlobalAdmin, lang)
+	case "action":
+		err = installActionIntegration(integration, bundle, req)
+	default:
+		err = fmt.Errorf("integrations of type: %s cannot be installed yet", item.Type)
+	}
+	if err != nil {
+		return fail(installStageCreate, err)
+	}
+
+	_, err = addIntegration(integration)
+	if err != nil {
+		return fail(installStageSave, err)
+	}
+	if checkedVersion != "" {
+		ReadMarketplaceVersionMetaStep(item.Id, checkedVersion, item.Edition != "", MarketplaceStepInstalled, "")
+	}
+	return integration, nil
+}
+
+// UninstallIntegration deletes what the integration created, or restores the theme it replaced.
+func UninstallIntegration(integration *Integration, isGlobalAdmin bool, lang string) (bool, error) {
+	integration, err := getIntegration(integration.Owner, integration.Name)
+	if err != nil {
+		return false, err
+	}
+	if integration == nil {
+		return false, nil
+	}
+
+	var application *Application
+	if integration.Application != "" {
+		application, err = getApplication("admin", integration.Application)
+		if err != nil {
+			return false, err
+		}
+		if application != nil && application.Organization != integration.Owner {
+			application = nil
+		}
+	}
+
+	switch integration.Type {
+	case "app":
+		if application != nil {
+			var agent *Agent
+			agent, err = GetAgentByApplication(application.Name)
+			if err == nil && agent != nil && agent.Owner == integration.Owner {
+				_, err = DeleteAgent(agent)
+			}
+			if err == nil {
+				_, err = DeleteApplication(application)
+			}
+		}
+	case "action":
+		if integration.Provider != "" {
+			_, err = DeleteProvider(&Provider{Owner: integration.Owner, Name: integration.Provider})
+		}
+	case "provider":
+		if application != nil {
+			providers := []*ProviderItem{}
+			for _, providerItem := range application.Providers {
+				if providerItem.Name != integration.Provider {
+					providers = append(providers, providerItem)
+				}
+			}
+			application.Providers = providers
+			_, err = UpdateApplication(application.GetId(), application, isGlobalAdmin, lang, []string{"providers"})
+			if err != nil {
+				return false, err
+			}
+		}
+		if integration.Provider != "" {
+			_, err = DeleteProvider(&Provider{Owner: integration.Owner, Name: integration.Provider})
+		}
+	case "theme":
+		if application != nil && integration.Backup != "" {
+			theme := themeFields{}
+			err = json.Unmarshal([]byte(integration.Backup), &theme)
+			if err != nil {
+				return false, err
+			}
+			setApplicationTheme(application, &theme)
+			_, err = UpdateApplication(application.GetId(), application, isGlobalAdmin, lang, themeColumns)
+			if err == nil && theme.ThemeData == nil {
+				// the update skips a nil JSON column, so put back the missing theme explicitly
+				_, err = ormer.Engine.ID(core.PK{application.Owner, application.Name}).Cols("theme_data").Nullable("theme_data").Update(&Application{})
+			}
+		}
+	}
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := deleteIntegration(integration)
+	if err != nil {
+		return false, err
+	}
+	// the Marketplace server is told only about what it checked when installing: not files or a catalog of one's own
+	isFromMarketplace := integration.Source == "" && (integration.LicenseId != "" || conf.GetConfigString("marketplaceUrl") == "")
+	if affected && isFromMarketplace {
+		ReadMarketplaceVersionMetaStep(integration.IntegrationId, integration.Version, integration.LicenseId != "", marketplaceStepUninstalled, "")
+	}
+	return affected, nil
+}

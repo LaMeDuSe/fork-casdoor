@@ -57,7 +57,9 @@ func (c *ApiController) Enforce() {
 		return
 	}
 
-	var request []string
+	// Accept both plain string arrays (["alice","data1","read"]) and mixed arrays
+	// with JSON objects ([{"DivisionGuid":"x"}, "resource", "read"]) for ABAC support.
+	var request []interface{}
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &request)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -74,8 +76,8 @@ func (c *ApiController) Enforce() {
 		res := []bool{}
 		keyRes := []string{}
 
-		// type transformation
-		interfaceRequest := util.StringToInterfaceArray(request)
+		// Convert elements: JSON-object strings and maps become anonymous structs for ABAC.
+		interfaceRequest := util.InterfaceToEnforceArray(request)
 
 		enforceResult, err := enforcer.Enforce(interfaceRequest...)
 		if err != nil {
@@ -119,18 +121,28 @@ func (c *ApiController) Enforce() {
 
 	permissions := []*object.Permission{}
 	if modelId != "" {
-		owner, modelName, err := util.GetOwnerAndNameFromIdWithError(modelId)
+		owner, _, err := util.GetOwnerAndNameFromIdWithError(modelId)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
-		permissions, err = object.GetPermissionsByModel(owner, modelName)
+		permissions, err = object.GetPermissionsByModel(owner, modelId)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 	} else if resourceId != "" {
-		permissions, err = object.GetPermissionsByResource(resourceId)
+		isGlobalAdmin, user := c.isGlobalAdmin()
+		if user == nil {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
+
+		permissionOwner := user.Owner
+		if isGlobalAdmin {
+			permissionOwner = ""
+		}
+		permissions, err = object.GetPermissionsByResource(permissionOwner, resourceId)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -197,7 +209,8 @@ func (c *ApiController) BatchEnforce() {
 		return
 	}
 
-	var requests [][]string
+	// Accept both string arrays and mixed arrays with JSON objects for ABAC support.
+	var requests [][]interface{}
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &requests)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -214,8 +227,8 @@ func (c *ApiController) BatchEnforce() {
 		res := [][]bool{}
 		keyRes := []string{}
 
-		// type transformation
-		interfaceRequests := util.StringToInterfaceArray2d(requests)
+		// Convert elements: JSON-object strings and maps become anonymous structs for ABAC.
+		interfaceRequests := util.InterfaceToEnforceArray2d(requests)
 
 		enforceResult, err := enforcer.BatchEnforce(interfaceRequests)
 		if err != nil {
@@ -259,12 +272,12 @@ func (c *ApiController) BatchEnforce() {
 
 	permissions := []*object.Permission{}
 	if modelId != "" {
-		owner, modelName, err := util.GetOwnerAndNameFromIdWithError(modelId)
+		owner, _, err := util.GetOwnerAndNameFromIdWithError(modelId)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
-		permissions, err = object.GetPermissionsByModel(owner, modelName)
+		permissions, err = object.GetPermissionsByModel(owner, modelId)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -311,13 +324,9 @@ func (c *ApiController) BatchEnforce() {
 // @Success 200 {object} controllers.Response The Response object
 // @router /get-all-objects [get]
 func (c *ApiController) GetAllObjects() {
-	userId := c.Ctx.Input.Query("userId")
-	if userId == "" {
-		userId = c.GetSessionUsername()
-		if userId == "" {
-			c.ResponseError(c.T("general:Please login first"))
-			return
-		}
+	userId, ok := c.getCasbinQueryUserId()
+	if !ok {
+		return
 	}
 
 	objects, err := object.GetAllObjects(userId)
@@ -337,13 +346,9 @@ func (c *ApiController) GetAllObjects() {
 // @Success 200 {object} controllers.Response The Response object
 // @router /get-all-actions [get]
 func (c *ApiController) GetAllActions() {
-	userId := c.Ctx.Input.Query("userId")
-	if userId == "" {
-		userId = c.GetSessionUsername()
-		if userId == "" {
-			c.ResponseError(c.T("general:Please login first"))
-			return
-		}
+	userId, ok := c.getCasbinQueryUserId()
+	if !ok {
+		return
 	}
 
 	actions, err := object.GetAllActions(userId)
@@ -363,13 +368,9 @@ func (c *ApiController) GetAllActions() {
 // @Success 200 {object} controllers.Response The Response object
 // @router /get-all-roles [get]
 func (c *ApiController) GetAllRoles() {
-	userId := c.Ctx.Input.Query("userId")
-	if userId == "" {
-		userId = c.GetSessionUsername()
-		if userId == "" {
-			c.ResponseError(c.T("general:Please login first"))
-			return
-		}
+	userId, ok := c.getCasbinQueryUserId()
+	if !ok {
+		return
 	}
 
 	roles, err := object.GetAllRoles(userId)
@@ -379,4 +380,24 @@ func (c *ApiController) GetAllRoles() {
 	}
 
 	c.ResponseOk(roles)
+}
+
+func (c *ApiController) getCasbinQueryUserId() (string, bool) {
+	sessionUserId := c.GetSessionUsername()
+	if sessionUserId == "" {
+		c.ResponseError(c.T("general:Please login first"))
+		return "", false
+	}
+
+	userId := c.Ctx.Input.Query("userId")
+	if userId == "" || userId == sessionUserId {
+		return sessionUserId, true
+	}
+
+	hasPermission, err := object.CheckUserPermission(sessionUserId, userId, true, c.GetAcceptLanguage())
+	if !hasPermission {
+		c.ResponseError(err.Error())
+		return "", false
+	}
+	return userId, true
 }

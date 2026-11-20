@@ -38,8 +38,12 @@ func (c *ApiController) GetTickets() {
 	sortField := c.Ctx.Input.Query("sortField")
 	sortOrder := c.Ctx.Input.Query("sortOrder")
 
-	user := c.getCurrentUser()
+	user := c.GetCurrentUser()
 	isAdmin := c.IsAdmin()
+	if !isAdmin && user == nil {
+		c.ResponseError(c.T("general:Please sign in first"))
+		return
+	}
 
 	var tickets []*object.Ticket
 	var err error
@@ -109,12 +113,18 @@ func (c *ApiController) GetTicket() {
 	}
 
 	// Check permission: user can only view their own tickets unless they are admin
-	user := c.getCurrentUser()
+	user := c.GetCurrentUser()
 	isAdmin := c.IsAdmin()
 
-	if ticket != nil && !isAdmin && ticket.User != user.GetId() {
-		c.ResponseError(c.T("auth:Unauthorized operation"))
-		return
+	if ticket != nil && !isAdmin {
+		if user == nil {
+			c.ResponseError(c.T("general:Please sign in first"))
+			return
+		}
+		if ticket.User != user.GetId() {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
 	}
 
 	c.ResponseOk(ticket)
@@ -139,8 +149,12 @@ func (c *ApiController) UpdateTicket() {
 	}
 
 	// Check permission
-	user := c.getCurrentUser()
 	isAdmin := c.IsAdmin()
+	user := c.GetCurrentUser()
+	if !isAdmin && user == nil {
+		c.ResponseError(c.T("general:Please sign in first"))
+		return
+	}
 
 	existingTicket, err := object.GetTicket(id)
 	if err != nil {
@@ -171,7 +185,7 @@ func (c *ApiController) UpdateTicket() {
 		ticket.CreatedTime = existingTicket.CreatedTime
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateTicket(id, &ticket))
+	c.Data["json"] = WrapActionResponse(object.UpdateTicket(id, &ticket))
 	c.ServeJSON()
 }
 
@@ -191,10 +205,14 @@ func (c *ApiController) AddTicket() {
 	}
 
 	// Set the user field to the current user
-	user := c.getCurrentUser()
+	user := c.GetCurrentUser()
+	if user == nil {
+		c.ResponseError(c.T("general:Please sign in first"))
+		return
+	}
 	ticket.User = user.GetId()
 
-	c.Data["json"] = wrapActionResponse(object.AddTicket(&ticket))
+	c.Data["json"] = WrapActionResponse(object.AddTicket(&ticket))
 	c.ServeJSON()
 }
 
@@ -219,7 +237,7 @@ func (c *ApiController) DeleteTicket() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteTicket(&ticket))
+	c.Data["json"] = WrapActionResponse(object.DeleteTicket(&ticket))
 	c.ServeJSON()
 }
 
@@ -242,8 +260,12 @@ func (c *ApiController) AddTicketMessage() {
 	}
 
 	// Check permission
-	user := c.getCurrentUser()
 	isAdmin := c.IsAdmin()
+	user := c.GetCurrentUser()
+	if !isAdmin && user == nil {
+		c.ResponseError(c.T("general:Please sign in first"))
+		return
+	}
 
 	ticket, err := object.GetTicket(id)
 	if err != nil {
@@ -266,6 +288,6 @@ func (c *ApiController) AddTicketMessage() {
 	message.Author = user.GetId()
 	message.IsAdmin = isAdmin
 
-	c.Data["json"] = wrapActionResponse(object.AddTicketMessage(id, &message))
+	c.Data["json"] = WrapActionResponse(object.AddTicketMessage(id, &message))
 	c.ServeJSON()
 }

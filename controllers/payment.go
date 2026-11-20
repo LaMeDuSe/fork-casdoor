@@ -42,7 +42,7 @@ func (c *ApiController) GetPayments() {
 		var payments []*object.Payment
 		var err error
 
-		if c.IsAdmin() {
+		if c.IsAdminOfOrganization(owner) {
 			// If field is "user", filter by that user even for admins
 			if field == "user" && value != "" {
 				payments, err = object.GetUserPayments(owner, value)
@@ -50,10 +50,8 @@ func (c *ApiController) GetPayments() {
 				payments, err = object.GetPayments(owner)
 			}
 		} else {
-			user := c.GetSessionUsername()
-			_, userName, userErr := util.GetOwnerAndNameFromIdWithError(user)
-			if userErr != nil {
-				c.ResponseError(userErr.Error())
+			userName, ok := c.requireSessionUserNameOf(owner)
+			if !ok {
 				return
 			}
 			payments, err = object.GetUserPayments(owner, userName)
@@ -67,24 +65,22 @@ func (c *ApiController) GetPayments() {
 		c.ResponseOk(payments)
 	} else {
 		limit := util.ParseInt(limit)
-		if !c.IsAdmin() {
-			user := c.GetSessionUsername()
-			_, userName, userErr := util.GetOwnerAndNameFromIdWithError(user)
-			if userErr != nil {
-				c.ResponseError(userErr.Error())
+		user := ""
+		if !c.IsAdminOfOrganization(owner) {
+			userName, ok := c.requireSessionUserNameOf(owner)
+			if !ok {
 				return
 			}
-			field = "user"
-			value = userName
+			user = userName
 		}
-		count, err := object.GetPaymentCount(owner, field, value)
+		count, err := object.GetPaymentCount(owner, user, field, value)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
 		paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
-		payments, err := object.GetPaginationPayments(owner, paginator.Offset(), limit, field, value, sortField, sortOrder)
+		payments, err := object.GetPaginationPayments(owner, user, paginator.Offset(), limit, field, value, sortField, sortOrder)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -106,6 +102,19 @@ func (c *ApiController) GetPayments() {
 func (c *ApiController) GetUserPayments() {
 	owner := c.Ctx.Input.Query("owner")
 	user := c.Ctx.Input.Query("user")
+
+	if !c.IsAdminOfOrganization(owner) {
+		sessionUser := c.GetSessionUsername()
+		sessionUserOwner, sessionUserName, err := util.GetOwnerAndNameFromIdWithError(sessionUser)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if sessionUserOwner != owner || sessionUserName != user {
+			c.ResponseError("Forbidden")
+			return
+		}
+	}
 
 	payments, err := object.GetUserPayments(owner, user)
 	if err != nil {
@@ -132,6 +141,19 @@ func (c *ApiController) GetPayment() {
 		return
 	}
 
+	if payment != nil && !c.IsAdminOfOrganization(payment.Owner) {
+		sessionUser := c.GetSessionUsername()
+		sessionUserOwner, sessionUserName, err := util.GetOwnerAndNameFromIdWithError(sessionUser)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if payment.Owner != sessionUserOwner || payment.User != sessionUserName {
+			c.ResponseError("Forbidden")
+			return
+		}
+	}
+
 	c.ResponseOk(payment)
 }
 
@@ -153,7 +175,7 @@ func (c *ApiController) UpdatePayment() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdatePayment(id, &payment))
+	c.Data["json"] = WrapActionResponse(object.UpdatePayment(id, &payment))
 	c.ServeJSON()
 }
 
@@ -172,7 +194,7 @@ func (c *ApiController) AddPayment() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddPayment(&payment))
+	c.Data["json"] = WrapActionResponse(object.AddPayment(&payment))
 	c.ServeJSON()
 }
 
@@ -191,7 +213,7 @@ func (c *ApiController) DeletePayment() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeletePayment(&payment))
+	c.Data["json"] = WrapActionResponse(object.DeletePayment(&payment))
 	c.ServeJSON()
 }
 
@@ -207,6 +229,21 @@ func (c *ApiController) NotifyPayment() {
 	paymentName := c.Ctx.Input.Param(":payment")
 
 	body := c.Ctx.Input.RequestBody
+
+	existingPayment, err := object.GetPayment(util.GetId(owner, paymentName))
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	// a Dummy payment is marked as paid without any external check, so only its own user or an admin can do it
+	if existingPayment != nil && existingPayment.Type == "Dummy" && !c.IsAdminOfOrganization(existingPayment.Owner) {
+		sessionUserOwner, sessionUserName, err := util.GetOwnerAndNameFromIdWithError(c.GetSessionUsername())
+		if err != nil || existingPayment.Owner != sessionUserOwner || existingPayment.User != sessionUserName {
+			c.ResponseError("Forbidden")
+			return
+		}
+	}
 
 	payment, err := object.NotifyPayment(body, owner, paymentName, c.GetAcceptLanguage())
 	if err != nil {
@@ -233,9 +270,24 @@ func (c *ApiController) InvoicePayment() {
 		return
 	}
 
+	// the same check as GetPayment()
+	if payment != nil && !c.IsAdminOfOrganization(payment.Owner) {
+		sessionUser := c.GetSessionUsername()
+		sessionUserOwner, sessionUserName, err := util.GetOwnerAndNameFromIdWithError(sessionUser)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if payment.Owner != sessionUserOwner || payment.User != sessionUserName {
+			c.ResponseError("Forbidden")
+			return
+		}
+	}
+
 	invoiceUrl, err := object.InvoicePayment(payment)
 	if err != nil {
 		c.ResponseError(err.Error())
+		return
 	}
 	c.ResponseOk(invoiceUrl)
 }

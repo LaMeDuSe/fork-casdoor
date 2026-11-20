@@ -15,12 +15,11 @@
 package routers
 
 import (
-	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/beego/beego/v2/server/web/context"
-	"github.com/casdoor/casdoor/mcp"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 )
@@ -30,13 +29,14 @@ func AutoSigninFilter(ctx *context.Context) {
 	if strings.HasPrefix(urlPath, "/api/login/oauth/access_token") {
 		return
 	}
-	if urlPath == "/api/mcp" {
-		var req mcp.McpRequest
-		if err := json.Unmarshal(ctx.Input.RequestBody, &req); err == nil {
-			if req.Method == "initialize" || req.Method == "notifications/initialized" || req.Method == "ping" || req.Method == "tools/list" {
-				return
-			}
-		}
+	// The RFC 7591/7592 DCR endpoints authenticate themselves: the bearer value is the
+	// application's "registration_access_token", which is not a row in the "token" table.
+	if strings.HasPrefix(urlPath, "/api/oauth/register") {
+		return
+	}
+	// ApiFilter answers 405 to the other methods of the MCP server before any credential is checked
+	if object.IsBuiltinMcpPath(urlPath) && ctx.Request.Method != http.MethodPost {
+		return
 	}
 	//if getSessionUser(ctx) != "" {
 	//	return
@@ -50,6 +50,21 @@ func AutoSigninFilter(ctx *context.Context) {
 	}
 	if accessToken == "" {
 		accessToken = parseBearerToken(ctx)
+		if accessToken != "" {
+			skipSessionPersistence(ctx)
+		}
+		// "Authorization: Bearer <accessKey>:<accessSecret>" for the agent platforms that call the MCP gateway with a fixed key
+		if accessKey, accessSecret, ok := strings.Cut(accessToken, ":"); ok && strings.HasPrefix(urlPath, "/api/server/") {
+			userId, err := getUsernameByKeyPair(accessKey, accessSecret)
+			if err != nil {
+				denyMcpRequest(ctx, err.Error(), true)
+				return
+			}
+			if userId != "" {
+				setSessionUser(ctx, userId)
+				return
+			}
+		}
 	}
 
 	if accessToken != "" {
@@ -59,18 +74,58 @@ func AutoSigninFilter(ctx *context.Context) {
 			return
 		}
 
-		if token == nil {
-			responseError(ctx, "Access token doesn't exist in database")
+		// an ID-JAG is a grant to be redeemed at another authorization server, not an access token
+		if token == nil || token.TokenType == "ID-JAG" {
+			responseInvalidToken(ctx, nil, "invalid_token", "Access token doesn't exist in database")
+			return
+		}
+
+		// RFC 8707: a token bound to a resource works only for that resource
+		if strings.HasPrefix(urlPath, "/api/server/") && token.Resource != "" && strings.TrimSuffix(token.Resource, "/") != object.GetServerProxyUrl(ctx.Request.Host, ctx.Input.Param(":owner"), ctx.Input.Param(":name")) {
+			responseInvalidToken(ctx, token, "invalid_token", "The access token is for another resource")
+			return
+		}
+		if object.IsBuiltinMcpPath(urlPath) && token.Resource != "" && !object.IsBuiltinMcpResource(ctx.Request.Host, token.Resource) {
+			responseInvalidToken(ctx, token, "invalid_token", "The access token is for another resource")
 			return
 		}
 
 		isExpired, expireTime := util.IsTokenExpired(token.CreatedTime, token.ExpiresIn)
 		if isExpired {
-			responseError(ctx, fmt.Sprintf("Access token has expired, expireTime = %s", expireTime))
+			responseInvalidToken(ctx, token, "invalid_token", fmt.Sprintf("Access token has expired, expireTime = %s", expireTime))
 			return
 		}
 
-		userId := util.GetId(token.Organization, token.User)
+		// The token's user may have been forbidden or deleted after the token was issued
+		isUserActive, err := token.IsUserActive()
+		if err != nil {
+			responseError(ctx, err.Error())
+			return
+		}
+		if !isUserActive {
+			responseInvalidToken(ctx, token, "invalid_token", "The user is forbidden to sign in, please contact the administrator")
+			return
+		}
+
+		// Validate DPoP proof for DPoP-bound tokens (RFC 9449).
+		if token.TokenType == "DPoP" {
+			dpopProof := ctx.Request.Header.Get("DPoP")
+			if dpopProof == "" {
+				responseInvalidToken(ctx, token, "invalid_dpop_proof", "DPoP proof header required for DPoP-bound access token")
+				return
+			}
+			htu := object.GetDPoPHtu(ctx.Request.Host, ctx.Request.URL.Path)
+			jkt, dpopErr := object.ValidateDPoPProof(dpopProof, ctx.Request.Method, htu, accessToken)
+			if dpopErr != nil {
+				responseInvalidToken(ctx, token, "invalid_dpop_proof", fmt.Sprintf("DPoP proof validation failed: %s", dpopErr.Error()))
+				return
+			}
+			if jkt != token.DPoPJkt {
+				responseInvalidToken(ctx, token, "invalid_token", "DPoP proof key binding mismatch")
+				return
+			}
+		}
+
 		application, err := object.GetApplicationByUserId(fmt.Sprintf("app/%s", token.Application))
 		if err != nil {
 			responseError(ctx, err.Error())
@@ -81,20 +136,22 @@ func AutoSigninFilter(ctx *context.Context) {
 			return
 		}
 
+		var userId string
+		if token.GrantType == "client_credentials" {
+			userId = object.GetAppUserId(application)
+		} else {
+			userId = util.GetId(token.Organization, token.User)
+		}
+		setSessionSigninToken(ctx, userId, token)
 		setSessionUser(ctx, userId)
 		setSessionOidc(ctx, token.Scope, application.ClientId)
 		return
 	}
 
-	accessKey := ctx.Input.Query("accessKey")
-	accessSecret := ctx.Input.Query("accessSecret")
-	if accessKey != "" && accessSecret != "" {
-		userId, err := getUsernameByKeys(ctx)
-		if err != nil {
-			responseError(ctx, err.Error())
-		}
-
-		setSessionUser(ctx, userId)
+	err := clearSessionOfRevokedToken(ctx)
+	if err != nil {
+		responseError(ctx, err.Error())
+		return
 	}
 
 	// "/page?clientId=123&clientSecret=456"
@@ -104,6 +161,19 @@ func AutoSigninFilter(ctx *context.Context) {
 		return
 	}
 	if userId != "" {
+		skipSessionPersistence(ctx)
+		setSessionUser(ctx, userId)
+		return
+	}
+
+	// "/page?accessKey=123&accessSecret=456"
+	userId, err = getUsernameByAccessKey(ctx)
+	if err != nil {
+		responseError(ctx, err.Error())
+		return
+	}
+	if userId != "" {
+		skipSessionPersistence(ctx)
 		setSessionUser(ctx, userId)
 		return
 	}
@@ -112,13 +182,7 @@ func AutoSigninFilter(ctx *context.Context) {
 	userId = ctx.Input.Query("username")
 	password := ctx.Input.Query("password")
 	if userId != "" && password != "" && ctx.Input.Query("grant_type") == "" {
-		owner, name, err := util.GetOwnerAndNameFromIdWithError(userId)
-		if err != nil {
-			responseError(ctx, err.Error())
-			return
-		}
-
-		_, err = object.CheckUserPassword(owner, name, password, "en")
+		err = checkUserPasswordWithoutMfa(userId, password, util.GetClientIpFromRequest(ctx.Request), getAcceptLanguage(ctx))
 		if err != nil {
 			responseError(ctx, err.Error())
 			return
@@ -126,4 +190,21 @@ func AutoSigninFilter(ctx *context.Context) {
 
 		setSessionUser(ctx, userId)
 	}
+}
+
+func checkUserPasswordWithoutMfa(userId string, password string, clientIp string, lang string) error {
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(userId)
+	if err != nil {
+		return err
+	}
+
+	user, err := object.CheckUserPassword(owner, name, password, lang)
+	if err != nil {
+		return err
+	}
+
+	if user.IsMfaEnabled() {
+		return fmt.Errorf("the user: %s has MFA enabled and cannot sign in with a password in the URL", userId)
+	}
+	return object.CheckPasswordOnlySignin(user, clientIp, lang)
 }

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/beego/beego/v2/core/utils/pagination"
+	"github.com/casdoor/casdoor/ee"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 )
@@ -90,19 +91,46 @@ func (c *ApiController) GetRole() {
 // @Description update role
 // @Param   id     query    string  true        "The id ( owner/name ) of the role"
 // @Param   body    body   object.Role  true        "The details of the role"
+// @Param   columns query  string  false  "Comma-separated fields to update, e.g. users,roles; the other fields keep their current values"
 // @Success 200 {object} controllers.Response The Response object
 // @router /update-role [post]
 func (c *ApiController) UpdateRole() {
 	id := c.Ctx.Input.Query("id")
+	columnsStr := c.Ctx.Input.Query("columns")
 
 	var role object.Role
-	err := json.Unmarshal(c.Ctx.Input.RequestBody, &role)
-	if err != nil {
+	if columnsStr != "" {
+		oldRole, err := object.GetRole(id)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if oldRole == nil {
+			c.Data["json"] = WrapActionResponse(false)
+			c.ServeJSON()
+			return
+		}
+
+		role = *oldRole
+		err = mergeColumns(&role, c.Ctx.Input.RequestBody, columnsStr)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	} else {
+		err := json.Unmarshal(c.Ctx.Input.RequestBody, &role)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	if err := ee.CheckRoleSod(&role, c.GetAcceptLanguage()); err != nil {
 		c.ResponseError(err.Error())
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateRole(id, &role))
+	c.Data["json"] = WrapActionResponse(object.UpdateRole(id, &role, c.IsGlobalAdmin(), c.GetAcceptLanguage()))
 	c.ServeJSON()
 }
 
@@ -121,7 +149,16 @@ func (c *ApiController) AddRole() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddRole(&role))
+	if !c.requireOrganizationPermission(role.Owner) {
+		return
+	}
+
+	if err = ee.CheckRoleSod(&role, c.GetAcceptLanguage()); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddRole(&role))
 	c.ServeJSON()
 }
 
@@ -140,6 +177,6 @@ func (c *ApiController) DeleteRole() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteRole(&role))
+	c.Data["json"] = WrapActionResponse(object.DeleteRole(&role))
 	c.ServeJSON()
 }

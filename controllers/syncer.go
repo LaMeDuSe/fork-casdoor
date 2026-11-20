@@ -76,8 +76,19 @@ func (c *ApiController) GetSyncers() {
 // @router /get-syncer [get]
 func (c *ApiController) GetSyncer() {
 	id := c.Ctx.Input.Query("id")
+	organization := c.Ctx.Input.Query("organization")
 
-	syncer, err := object.GetMaskedSyncer(object.GetSyncer(id))
+	var syncer *object.Syncer
+	var err error
+
+	isGlobalAdmin, _ := c.isGlobalAdmin()
+	if isGlobalAdmin {
+		syncer, err = object.GetSyncer(id)
+	} else {
+		syncer, err = object.GetSyncerByOrganization(id, organization)
+	}
+
+	syncer, err = object.GetMaskedSyncer(syncer, err)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
@@ -104,7 +115,16 @@ func (c *ApiController) UpdateSyncer() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateSyncer(id, &syncer, c.IsGlobalAdmin(), c.GetAcceptLanguage()))
+	if !c.checkSyncerDatabase(&syncer) {
+		return
+	}
+
+	if err = object.CheckSyncerEdition(&syncer, false); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdateSyncer(id, &syncer, c.IsGlobalAdmin(), c.GetAcceptLanguage()))
 	c.ServeJSON()
 }
 
@@ -123,7 +143,19 @@ func (c *ApiController) AddSyncer() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddSyncer(&syncer))
+	if !c.requireOrganizationPermission(syncer.Organization) {
+		return
+	}
+	if !c.checkSyncerDatabase(&syncer) {
+		return
+	}
+
+	if err = object.CheckSyncerEdition(&syncer, true); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddSyncer(&syncer))
 	c.ServeJSON()
 }
 
@@ -142,7 +174,7 @@ func (c *ApiController) DeleteSyncer() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteSyncer(&syncer))
+	c.Data["json"] = WrapActionResponse(object.DeleteSyncer(&syncer))
 	c.ServeJSON()
 }
 
@@ -150,12 +182,23 @@ func (c *ApiController) DeleteSyncer() {
 // @Title RunSyncer
 // @Tag Syncer API
 // @Description run syncer
-// @Param   body    body   object.Syncer  true        "The details of the syncer"
+// @Param   id           query  string  true        "The id (owner/name) of the syncer"
+// @Param   organization query  string  false       "The organization of the syncer"
 // @Success 200 {object} controllers.Response The Response object
-// @router /run-syncer [get]
+// @router /run-syncer [post]
 func (c *ApiController) RunSyncer() {
 	id := c.Ctx.Input.Query("id")
-	syncer, err := object.GetSyncer(id)
+	organization := c.Ctx.Input.Query("organization")
+
+	var syncer *object.Syncer
+	var err error
+
+	isGlobalAdmin, _ := c.isGlobalAdmin()
+	if isGlobalAdmin {
+		syncer, err = object.GetSyncer(id)
+	} else {
+		syncer, err = object.GetSyncerByOrganization(id, organization)
+	}
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
@@ -182,6 +225,10 @@ func (c *ApiController) TestSyncerDb() {
 		return
 	}
 
+	if !c.checkSyncerDatabase(&syncer) {
+		return
+	}
+
 	err = object.TestSyncer(syncer)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -189,4 +236,28 @@ func (c *ApiController) TestSyncerDb() {
 	}
 
 	c.ResponseOk()
+}
+
+func (c *ApiController) checkSyncerDatabase(syncer *object.Syncer) bool {
+	err := object.CheckSyncerDatabaseTarget(syncer)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return false
+	}
+
+	if c.IsGlobalAdmin() {
+		return true
+	}
+
+	if syncer.DatabaseType == "sqlite3" || syncer.DatabaseType == "sqlite" {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return false
+	}
+
+	err = object.CheckSyncerDatabaseHost(syncer)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return false
+	}
+	return true
 }

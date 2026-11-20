@@ -102,6 +102,17 @@ func (c *ApiController) UpdateModel() {
 		return
 	}
 
+	oldModel, err := object.GetModel(id)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if err = object.CheckModelEdition(&model, oldModel); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
 	c.Data["json"] = wrapErrorResponse(object.UpdateModelWithCheck(id, &model))
 	c.ServeJSON()
 }
@@ -121,7 +132,12 @@ func (c *ApiController) AddModel() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddModel(&model))
+	if err = object.CheckModelEdition(&model, nil); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddModelWithCheck(&model))
 	c.ServeJSON()
 }
 
@@ -140,6 +156,6 @@ func (c *ApiController) DeleteModel() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteModel(&model))
+	c.Data["json"] = WrapActionResponse(object.DeleteModel(&model))
 	c.ServeJSON()
 }

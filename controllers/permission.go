@@ -129,19 +129,84 @@ func (c *ApiController) GetPermission() {
 // @Description update permission
 // @Param   id     query    string  true        "The id ( owner/name ) of the permission"
 // @Param   body    body   object.Permission  true        "The details of the permission"
+// @Param   columns query  string  false  "Comma-separated fields to update, e.g. users,roles; the other fields keep their current values"
 // @Success 200 {object} controllers.Response The Response object
 // @router /update-permission [post]
 func (c *ApiController) UpdatePermission() {
 	id := c.Ctx.Input.Query("id")
+	columnsStr := c.Ctx.Input.Query("columns")
 
 	var permission object.Permission
-	err := json.Unmarshal(c.Ctx.Input.RequestBody, &permission)
+	if columnsStr != "" {
+		oldPermission, err := object.GetPermission(id)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if oldPermission == nil {
+			c.Data["json"] = WrapActionResponse(false)
+			c.ServeJSON()
+			return
+		}
+
+		permission = *oldPermission
+		err = mergeColumns(&permission, c.Ctx.Input.RequestBody, columnsStr)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	} else {
+		err := json.Unmarshal(c.Ctx.Input.RequestBody, &permission)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	oldPermission, err := object.GetPermission(id)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdatePermission(id, &permission))
+	if err = object.CheckPermissionEdition(&permission, oldPermission); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdatePermission(id, &permission))
+	c.ServeJSON()
+}
+
+// UpdatePermissions
+// @Title UpdatePermissions
+// @Tag Permission API
+// @Description update permissions in batch
+// @Param   body    body   []object.Permission  true        "The details of the permissions"
+// @Success 200 {object} controllers.Response The Response object
+// @router /update-permissions [post]
+func (c *ApiController) UpdatePermissions() {
+	var permissions []*object.Permission
+	err := json.Unmarshal(c.Ctx.Input.RequestBody, &permissions)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	for _, permission := range permissions {
+		oldPermission, err := object.GetPermission(permission.GetId())
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		if err = object.CheckPermissionEdition(permission, oldPermission); err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdatePermissions(permissions))
 	c.ServeJSON()
 }
 
@@ -160,7 +225,12 @@ func (c *ApiController) AddPermission() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddPermission(&permission))
+	if err = object.CheckPermissionEdition(&permission, nil); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddPermissionWithCheck(&permission))
 	c.ServeJSON()
 }
 
@@ -179,6 +249,6 @@ func (c *ApiController) DeletePermission() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeletePermission(&permission))
+	c.Data["json"] = WrapActionResponse(object.DeletePermission(&permission))
 	c.ServeJSON()
 }

@@ -17,6 +17,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/beego/beego/v2/core/utils/pagination"
 	"github.com/casdoor/casdoor/object"
@@ -88,6 +89,7 @@ func (c *ApiController) GetEnforcer() {
 		if loadModelCfg == "true" && enforcer.Model != "" {
 			err = enforcer.LoadModelCfg()
 			if err != nil {
+				c.ResponseError(err.Error())
 				return
 			}
 		}
@@ -114,7 +116,11 @@ func (c *ApiController) UpdateEnforcer() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateEnforcer(id, &enforcer))
+	if !c.checkEnforcerReferences(&enforcer) {
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdateEnforcer(id, &enforcer))
 	c.ServeJSON()
 }
 
@@ -133,7 +139,11 @@ func (c *ApiController) AddEnforcer() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddEnforcer(&enforcer))
+	if !c.checkEnforcerReferences(&enforcer) {
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddEnforcer(&enforcer))
 	c.ServeJSON()
 }
 
@@ -152,7 +162,7 @@ func (c *ApiController) DeleteEnforcer() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteEnforcer(&enforcer))
+	c.Data["json"] = WrapActionResponse(object.DeleteEnforcer(&enforcer))
 	c.ServeJSON()
 }
 
@@ -243,12 +253,17 @@ func (c *ApiController) UpdatePolicy() {
 		return
 	}
 
+	if len(policies) < 2 {
+		c.ResponseError("The request body should contain at least two policies (old and new)")
+		return
+	}
+
 	affected, err := object.UpdatePolicy(id, policies[0].Ptype, util.CasbinToSlice(policies[0]), util.CasbinToSlice(policies[1]))
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
 	}
-	c.Data["json"] = wrapActionResponse(affected)
+	c.Data["json"] = WrapActionResponse(affected)
 	c.ServeJSON()
 }
 
@@ -275,7 +290,7 @@ func (c *ApiController) AddPolicy() {
 		c.ResponseError(err.Error())
 		return
 	}
-	c.Data["json"] = wrapActionResponse(affected)
+	c.Data["json"] = WrapActionResponse(affected)
 	c.ServeJSON()
 }
 
@@ -302,6 +317,20 @@ func (c *ApiController) RemovePolicy() {
 		c.ResponseError(err.Error())
 		return
 	}
-	c.Data["json"] = wrapActionResponse(affected)
+	c.Data["json"] = WrapActionResponse(affected)
 	c.ServeJSON()
+}
+
+func (c *ApiController) checkEnforcerReferences(enforcer *object.Enforcer) bool {
+	if c.IsGlobalAdmin() {
+		return true
+	}
+
+	for _, id := range []string{enforcer.Model, enforcer.Adapter} {
+		if id != "" && !strings.HasPrefix(id, enforcer.Owner+"/") {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return false
+		}
+	}
+	return true
 }

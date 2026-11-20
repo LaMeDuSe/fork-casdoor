@@ -15,6 +15,7 @@
 package object
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -36,6 +37,17 @@ const (
 func CheckUserSignup(application *Application, organization *Organization, authForm *form.AuthForm, lang string) string {
 	if organization == nil {
 		return i18n.Translate(lang, "check:Organization does not exist")
+	}
+
+	// Normalize the phone number before the duplication checks below
+	if authForm.Phone != "" {
+		normalizedPhone, normalizedCountryCode, ok := util.GetNormalizedPhone(authForm.Phone, authForm.CountryCode)
+		if !ok {
+			return i18n.Translate(lang, "check:Phone number is invalid")
+		}
+
+		authForm.Phone = normalizedPhone
+		authForm.CountryCode = normalizedCountryCode
 	}
 
 	if application.IsSignupItemVisible("Username") {
@@ -65,19 +77,19 @@ func CheckUserSignup(application *Application, organization *Organization, authF
 				return i18n.Translate(lang, "check:Email already exists")
 			}
 		}
-		if HasUserByField(organization.Name, "phone", authForm.Phone) {
+		if HasUserByPhoneAndCountryCode(organization.Name, authForm.Phone, authForm.CountryCode) {
 			return i18n.Translate(lang, "check:Phone already exists")
 		}
 	}
 
 	if application.IsSignupItemVisible("Password") {
-		msg := CheckPasswordComplexityByOrg(organization, authForm.Password, lang)
+		msg := CheckPasswordComplexityByOrg(organization, authForm.Password, lang, authForm.Username)
 		if msg != "" {
 			return msg
 		}
 	}
 
-	if application.IsSignupItemVisible("Email") {
+	if application.IsSignupFieldVisible("Email") {
 		if authForm.Email == "" {
 			if application.IsSignupItemRequired("Email") {
 				return i18n.Translate(lang, "check:Email cannot be empty")
@@ -92,13 +104,13 @@ func CheckUserSignup(application *Application, organization *Organization, authF
 		}
 	}
 
-	if application.IsSignupItemVisible("Phone") {
+	if application.IsSignupFieldVisible("Phone") {
 		if authForm.Phone == "" {
 			if application.IsSignupItemRequired("Phone") {
 				return i18n.Translate(lang, "check:Phone cannot be empty")
 			}
 		} else {
-			if HasUserByField(organization.Name, "phone", authForm.Phone) {
+			if HasUserByPhoneAndCountryCode(organization.Name, authForm.Phone, authForm.CountryCode) {
 				return i18n.Translate(lang, "check:Phone already exists")
 			} else if !util.IsPhoneAllowInRegin(authForm.CountryCode, organization.CountryCodes) {
 				return i18n.Translate(lang, "check:Your region is not allow to signup by phone")
@@ -132,6 +144,10 @@ func CheckUserSignup(application *Application, organization *Organization, authF
 		}
 	}
 
+	if msg := checkSignupTag(application, authForm.Tag, lang); msg != "" {
+		return msg
+	}
+
 	for _, signupItem := range application.SignupItems {
 		if signupItem.Regex == "" {
 			continue
@@ -153,6 +169,22 @@ func CheckUserSignup(application *Application, organization *Organization, authF
 		}
 	}
 
+	return ""
+}
+
+func checkSignupTag(application *Application, tag string, lang string) string {
+	signupItem := application.getSignupItem("Tag")
+	if tag == "" || signupItem == nil {
+		return ""
+	}
+
+	options := signupItem.Options
+	if len(options) == 0 {
+		options = application.Tags
+	}
+	if !util.InSlice(options, tag) {
+		return fmt.Sprintf(i18n.Translate(lang, "auth:User's tag: %s is not listed in the application's tags"), tag)
+	}
 	return ""
 }
 
@@ -192,7 +224,7 @@ func CheckInvitationDefaultCode(code string, defaultCode string, lang string) er
 	if matched, err := util.IsInvitationCodeMatch(code, defaultCode); err != nil {
 		return err
 	} else if !matched {
-		return fmt.Errorf(i18n.Translate(lang, "check:Default code does not match the code's matching rules"))
+		return errors.New(i18n.Translate(lang, "check:Default code does not match the code's matching rules"))
 	}
 	return nil
 }
@@ -210,7 +242,7 @@ func checkSigninErrorTimes(user *User, lang string) error {
 
 		// deny the login if the error times is greater than the limit and the last login time is less than the duration
 		if minutes > 0 {
-			return fmt.Errorf(i18n.Translate(lang, "check:You have entered the wrong password or code too many times, please wait for %d minutes and try again"), minutes)
+			return NewSigninError(SigninReasonAccountFrozen, fmt.Sprintf(i18n.Translate(lang, "check:You have entered the wrong password or code too many times, please wait for %d minutes and try again"), minutes))
 		}
 
 		// reset the error times
@@ -225,7 +257,7 @@ func checkSigninErrorTimes(user *User, lang string) error {
 
 func CheckPassword(user *User, password string, lang string, options ...bool) error {
 	if password == "" {
-		return fmt.Errorf(i18n.Translate(lang, "check:Password cannot be empty"))
+		return errors.New(i18n.Translate(lang, "check:Password cannot be empty"))
 	}
 
 	enableCaptcha := false
@@ -246,12 +278,16 @@ func CheckPassword(user *User, password string, lang string, options ...bool) er
 		return err
 	}
 	if organization == nil {
-		return fmt.Errorf(i18n.Translate(lang, "check:Organization does not exist"))
+		return errors.New(i18n.Translate(lang, "check:Organization does not exist"))
 	}
 
 	passwordType := user.PasswordType
 	if passwordType == "" {
 		passwordType = organization.PasswordType
+	}
+	// an organization without a password type stores the passwords as they are
+	if passwordType == "" {
+		passwordType = "plain"
 	}
 
 	credManager := cred.GetCredManager(passwordType)
@@ -261,7 +297,7 @@ func CheckPassword(user *User, password string, lang string, options ...bool) er
 
 	if organization.MasterPassword != "" {
 		if password == organization.MasterPassword || credManager.IsPasswordCorrect(password, organization.MasterPassword, organization.PasswordSalt) {
-			return resetUserSigninErrorTimes(user)
+			return ResetUserSigninErrorTimes(user)
 		}
 	}
 
@@ -269,7 +305,7 @@ func CheckPassword(user *User, password string, lang string, options ...bool) er
 		return recordSigninErrorInfo(user, lang, enableCaptcha)
 	}
 
-	isOutdated := passwordType != organization.PasswordType
+	isOutdated := organization.PasswordType != "" && passwordType != organization.PasswordType
 	if isOutdated {
 		user.Password = password
 		user.UpdateUserPassword(organization)
@@ -279,17 +315,25 @@ func CheckPassword(user *User, password string, lang string, options ...bool) er
 		}
 	}
 
-	return resetUserSigninErrorTimes(user)
+	return ResetUserSigninErrorTimes(user)
 }
 
-func CheckPasswordComplexityByOrg(organization *Organization, password string, lang string) string {
+func CheckPasswordComplexityByOrg(organization *Organization, password string, lang string, username ...string) string {
 	errorMsg := checkPasswordComplexity(password, organization.PasswordOptions, lang)
-	return errorMsg
+	if errorMsg != "" {
+		return errorMsg
+	}
+
+	name := ""
+	if len(username) > 0 {
+		name = username[0]
+	}
+	return checkPasswordSecurityPolicy(organization, password, name, lang)
 }
 
 func CheckPasswordComplexity(user *User, password string, lang string) string {
 	organization, _ := GetOrganizationByUser(user)
-	return CheckPasswordComplexityByOrg(organization, password, lang)
+	return CheckPasswordComplexityByOrg(organization, password, lang, user.Name)
 }
 
 func CheckLdapUserPassword(user *User, password string, lang string, options ...bool) error {
@@ -335,7 +379,7 @@ func CheckLdapUserPassword(user *User, password string, lang string, options ...
 		}
 		if len(searchResult.Entries) > 1 {
 			conn.Close()
-			return fmt.Errorf(i18n.Translate(lang, "check:Multiple accounts with same uid, please check your ldap server"))
+			return errors.New(i18n.Translate(lang, "check:Multiple accounts with same uid, please check your ldap server"))
 		}
 
 		hit = true
@@ -355,7 +399,7 @@ func CheckLdapUserPassword(user *User, password string, lang string, options ...
 		}
 		return recordSigninErrorInfo(user, lang, enableCaptcha)
 	}
-	return resetUserSigninErrorTimes(user)
+	return ResetUserSigninErrorTimes(user)
 }
 
 func CheckUserPassword(organization string, username string, password string, lang string, options ...bool) (*User, error) {
@@ -373,16 +417,16 @@ func CheckUserPassword(organization string, username string, password string, la
 	}
 
 	if user == nil || user.IsDeleted {
-		return nil, fmt.Errorf(i18n.Translate(lang, "general:The user: %s doesn't exist"), util.GetId(organization, username))
+		return nil, NewSigninError(SigninReasonUserNotFound, fmt.Sprintf(i18n.Translate(lang, "general:The user: %s doesn't exist"), util.GetId(organization, username)))
 	}
 
 	if user.IsForbidden {
-		return nil, fmt.Errorf(i18n.Translate(lang, "check:The user is forbidden to sign in, please contact the administrator"))
+		return nil, NewSigninError(SigninReasonAccountDisabled, GetUserForbiddenMessage(user, lang))
 	}
 
 	// Prevent direct login for guest users without upgrading
 	if user.Tag == "guest-user" {
-		return nil, fmt.Errorf(i18n.Translate(lang, "check:Guest users must upgrade their account by setting a username and password before they can sign in directly"))
+		return nil, NewSigninError(SigninReasonAccountDisabled, i18n.Translate(lang, "check:Guest users must upgrade their account by setting a username and password before they can sign in directly"))
 	}
 
 	if isSigninViaLdap {
@@ -393,7 +437,7 @@ func CheckUserPassword(organization string, username string, password string, la
 
 	if user.Ldap != "" {
 		if !isSigninViaLdap && !isPasswordWithLdapEnabled {
-			return nil, fmt.Errorf(i18n.Translate(lang, "check:password or code is incorrect"))
+			return nil, errors.New(i18n.Translate(lang, "check:password or code is incorrect"))
 		}
 
 		// only for LDAP users
@@ -422,7 +466,7 @@ func CheckUserPassword(organization string, username string, password string, la
 
 func CheckUserPermission(requestUserId, userId string, strict bool, lang string) (bool, error) {
 	if requestUserId == "" {
-		return false, fmt.Errorf(i18n.Translate(lang, "general:Please login first"))
+		return false, errors.New(i18n.Translate(lang, "general:Please login first"))
 	}
 
 	userOwner := util.GetOwnerFromId(userId)
@@ -444,35 +488,36 @@ func CheckUserPermission(requestUserId, userId string, strict bool, lang string)
 		userOwner = targetUser.Owner
 	}
 
-	hasPermission := false
-	if IsAppUser(requestUserId) {
-		hasPermission = true
-	} else {
-		requestUser, err := GetUser(requestUserId)
-		if err != nil {
-			return false, err
-		}
+	requestUser, err := GetUserOrAppUser(requestUserId)
+	if err != nil {
+		return false, err
+	}
 
-		if requestUser == nil {
-			return false, fmt.Errorf(i18n.Translate(lang, "check:Session outdated, please login again"))
-		}
-		if requestUser.IsGlobalAdmin() {
+	if requestUser == nil {
+		return false, errors.New(i18n.Translate(lang, "check:Session outdated, please login again"))
+	}
+
+	hasPermission := false
+	if requestUser.IsGlobalAdmin() {
+		hasPermission = true
+	} else if requestUserId == userId {
+		hasPermission = true
+	} else if userOwner == requestUser.Owner {
+		if strict {
+			hasPermission = requestUser.IsAdmin
+		} else {
 			hasPermission = true
-		} else if requestUserId == userId {
-			hasPermission = true
-		} else if userOwner == requestUser.Owner {
-			if strict {
-				hasPermission = requestUser.IsAdmin
-			} else {
-				hasPermission = true
-			}
 		}
 	}
 
-	return hasPermission, fmt.Errorf(i18n.Translate(lang, "auth:Unauthorized operation"))
+	return hasPermission, errors.New(i18n.Translate(lang, "auth:Unauthorized operation"))
 }
 
 func CheckApiPermission(userId string, organization string, path string, method string) (bool, error) {
+	if organization == "" {
+		return false, nil
+	}
+
 	permissions, err := GetPermissions(organization)
 	if err != nil {
 		return false, err
@@ -489,10 +534,11 @@ func CheckApiPermission(userId string, organization string, path string, method 
 			continue
 		}
 
-		userHit := permission.isUserHit(userId)
+		userHit := permission.IsUserHit(userId)
+		groupHit := permission.isGroupHit(userId)
 		roleHit := permission.isRoleHit(userId)
 
-		if !userHit && !roleHit {
+		if !userHit && !groupHit && !roleHit {
 			if permission.Effect == "Allow" {
 				allowPermissionCount += 1
 			} else {
@@ -524,8 +570,24 @@ func CheckApiPermission(userId string, organization string, path string, method 
 				}
 			}
 		}
+		if groupHit {
+			isAllowed, err = enforcer.Enforce(userId, path, method)
+			if err != nil {
+				return false, err
+			}
+
+			if isAllowed {
+				if permission.Effect == "Allow" {
+					allowCount += 1
+				}
+			} else {
+				if permission.Effect == "Deny" {
+					denyCount += 1
+				}
+			}
+		}
 		if roleHit {
-			targetRoles, err := getRolesByUser(userId)
+			targetRoles, err := GetRolesByUser(userId)
 			if err != nil {
 				return false, err
 			}
@@ -577,6 +639,115 @@ func CheckApiPermission(userId string, organization string, path string, method 
 	return false, nil
 }
 
+func IsUserOfApplication(user *User, application *Application) (bool, error) {
+	if user.IsGlobalAdmin() || user.Owner == application.Organization || application.IsShared || application.IsExternalUser(user) {
+		return true, nil
+	}
+
+	organization, err := getOrganization("admin", user.Owner)
+	if err != nil {
+		return false, err
+	}
+	return organization != nil && organization.DefaultApplication == application.Name && application.Organization == "built-in", nil
+}
+
+func CheckPasswordOnlySignin(user *User, clientIp string, lang string) error {
+	organization, err := GetOrganizationByUser(user)
+	if err != nil {
+		return err
+	}
+	if organization != nil && organization.DisableSignin {
+		return fmt.Errorf(i18n.Translate(lang, "auth:The organization: %s has disabled users to signin"), organization.Name)
+	}
+
+	if clientIp != "" {
+		err = CheckEntryIp(clientIp, user, nil, organization, lang)
+		if err != nil {
+			return err
+		}
+	}
+
+	if user.NeedUpdatePassword || IsNeedPromptMfa(organization, user) {
+		return fmt.Errorf("the user: %s must update the password or set up MFA on the login page first", user.GetId())
+	}
+	return nil
+}
+
+func CheckApplicationSignin(application *Application, user *User, clientIp string, lang string) error {
+	if user.IsForbidden {
+		return errors.New(GetUserForbiddenMessage(user, lang))
+	}
+
+	if user.IsDeleted {
+		return errors.New(i18n.Translate(lang, "check:The user has been deleted and cannot be used to sign in, please contact the administrator"))
+	}
+
+	err := CheckEntryIp(clientIp, user, application, application.OrganizationObj, lang)
+	if err != nil {
+		return err
+	}
+
+	if application.DisableSignin {
+		return fmt.Errorf(i18n.Translate(lang, "auth:The application: %s has disabled users to signin"), application.Name)
+	}
+
+	if application.OrganizationObj != nil && application.OrganizationObj.DisableSignin {
+		return fmt.Errorf(i18n.Translate(lang, "auth:The organization: %s has disabled users to signin"), application.Organization)
+	}
+
+	err = checkUserOrganizationSignin(application, user, clientIp, lang)
+	if err != nil {
+		return err
+	}
+
+	allowed, err := CheckLoginPermission(user.GetId(), application)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf(i18n.Translate(lang, "auth:The user: %s is not allowed to sign in to the application: %s by the permissions of the organization: %s"), user.GetId(), application.Name, getLoginPermissionOrganization(user.Owner, application))
+	}
+
+	// "dcr" and "cimd" tell how a client registered, they don't limit who may sign in
+	accessTags := []string{}
+	for _, tag := range application.Tags {
+		if tag != "dcr" && tag != cimdTag {
+			accessTags = append(accessTags, tag)
+		}
+	}
+	if !user.IsGlobalAdmin() && !user.IsAdmin && len(accessTags) > 0 && !util.HasTagInSlice(accessTags, user.Tag) {
+		return fmt.Errorf(i18n.Translate(lang, "auth:User's tag: %s is not listed in the application's tags"), user.Tag)
+	}
+
+	return nil
+}
+
+func checkUserOrganizationSignin(application *Application, user *User, clientIp string, lang string) error {
+	if application.OrganizationObj != nil && application.OrganizationObj.Name == user.Owner {
+		return nil
+	}
+
+	organization, err := GetOrganizationByUser(user)
+	if err != nil {
+		return err
+	}
+	if organization == nil {
+		return nil
+	}
+
+	if organization.DisableSignin {
+		return fmt.Errorf(i18n.Translate(lang, "auth:The organization: %s has disabled users to signin"), organization.Name)
+	}
+	return CheckEntryIp(clientIp, nil, nil, organization, lang)
+}
+
+func getLoginPermissionOrganization(userOwner string, application *Application) string {
+	if application.IsShared {
+		return userOwner
+	}
+	return application.Organization
+}
+
 func CheckLoginPermission(userId string, application *Application) (bool, error) {
 	owner, _, err := util.GetOwnerAndNameFromIdWithError(userId)
 	if err != nil {
@@ -586,7 +757,15 @@ func CheckLoginPermission(userId string, application *Application) (bool, error)
 		return true, nil
 	}
 
-	permissions, err := GetPermissions(application.Organization)
+	user, err := GetUser(userId)
+	if err != nil {
+		return false, err
+	}
+	if user != nil && user.IsAdmin {
+		return true, nil
+	}
+
+	permissions, err := GetPermissions(getLoginPermissionOrganization(owner, application))
 	if err != nil {
 		return false, err
 	}
@@ -600,10 +779,11 @@ func CheckLoginPermission(userId string, application *Application) (bool, error)
 			continue
 		}
 
-		userHit := permission.isUserHit(userId)
+		userHit := permission.IsUserHit(userId)
+		groupHit := permission.isGroupHit(userId)
 		roleHit := permission.isRoleHit(userId)
 
-		if !userHit && !roleHit {
+		if !userHit && !groupHit && !roleHit {
 			if permission.Effect == "Allow" {
 				allowPermissionCount += 1
 			} else {
@@ -635,8 +815,24 @@ func CheckLoginPermission(userId string, application *Application) (bool, error)
 				}
 			}
 		}
+		if groupHit {
+			isAllowed, err = enforcer.Enforce(userId, application.Name, "Read")
+			if err != nil {
+				return false, err
+			}
+
+			if isAllowed {
+				if permission.Effect == "Allow" {
+					allowCount += 1
+				}
+			} else {
+				if permission.Effect == "Deny" {
+					denyCount += 1
+				}
+			}
+		}
 		if roleHit {
-			targetRoles, err := getRolesByUser(userId)
+			targetRoles, err := GetRolesByUser(userId)
 			if err != nil {
 				return false, err
 			}
@@ -753,9 +949,22 @@ func CheckUpdateUser(oldUser, user *User, lang string) string {
 			return i18n.Translate(lang, "check:Email already exists")
 		}
 	}
-	if oldUser.Phone != user.Phone {
-		if HasUserByField(user.Owner, "phone", user.Phone) {
-			return i18n.Translate(lang, "check:Phone already exists")
+	if oldUser.Phone != user.Phone || oldUser.CountryCode != user.CountryCode {
+		if user.Phone != "" {
+			normalizedPhone, normalizedCountryCode, ok := util.GetNormalizedPhone(user.Phone, user.GetCountryCode(""))
+			if !ok {
+				return i18n.Translate(lang, "check:Phone number is invalid")
+			}
+
+			user.Phone = normalizedPhone
+			user.CountryCode = normalizedCountryCode
+		}
+
+		// The normalization may have turned the new phone number into the old one
+		if oldUser.Phone != user.Phone || oldUser.CountryCode != user.CountryCode {
+			if HasUserByPhoneAndCountryCode(user.Owner, user.Phone, user.CountryCode) {
+				return i18n.Translate(lang, "check:Phone already exists")
+			}
 		}
 	}
 	if oldUser.IpWhitelist != user.IpWhitelist {
@@ -763,46 +972,76 @@ func CheckUpdateUser(oldUser, user *User, lang string) string {
 			return err.Error()
 		}
 	}
+	if msg := checkUserGroups(oldUser, user, lang); msg != "" {
+		return msg
+	}
 
 	return ""
 }
 
+// checkUserGroups keeps a user out of the groups of other organizations: a group grants the
+// roles and permissions of the organization owning it
+func checkUserGroups(oldUser, user *User, lang string) string {
+	for _, group := range user.Groups {
+		if !util.InSlice(oldUser.Groups, group) && !strings.HasPrefix(group, user.Owner+"/") {
+			return i18n.Translate(lang, "auth:Unauthorized operation")
+		}
+	}
+	return ""
+}
+
+func getOrganizationGroups(owner string, groups []string) []string {
+	if len(groups) == 0 {
+		return groups
+	}
+
+	res := []string{}
+	for _, group := range groups {
+		if strings.HasPrefix(group, owner+"/") {
+			res = append(res, group)
+		}
+	}
+	return res
+}
+
+// GetCaptchaProviderItem returns the captcha provider the login page shows: the first one with the rule
+// "Always", then "Dynamic", then "Internet-Only"
+func GetCaptchaProviderItem(application *Application) *ProviderItem {
+	for _, rule := range []string{"Always", "Dynamic", "Internet-Only"} {
+		for _, providerItem := range application.Providers {
+			if providerItem.Provider != nil && providerItem.Provider.Category == "Captcha" && providerItem.Rule == rule {
+				return providerItem
+			}
+		}
+	}
+	return nil
+}
+
 func CheckToEnableCaptcha(application *Application, organization, username string, clientIp string) (bool, error) {
-	if len(application.Providers) == 0 {
+	providerItem := GetCaptchaProviderItem(application)
+	if providerItem == nil {
 		return false, nil
 	}
 
-	for _, providerItem := range application.Providers {
-		if providerItem.Provider == nil || providerItem.Provider.Category != "Captcha" {
-			continue
-		}
-
-		if providerItem.Rule == "Internet-Only" {
-			if util.IsInternetIp(clientIp) {
-				return true, nil
-			}
-		}
-
-		if providerItem.Rule == "Dynamic" {
-			user, err := GetUserByFields(organization, username)
-			if err != nil {
-				return false, err
-			}
-
-			if user != nil {
-				failedSigninLimit, _, err := GetFailedSigninConfigByUser(user)
-				if err != nil {
-					return false, err
-				}
-
-				return user.SigninWrongTimes >= failedSigninLimit, nil
-			}
-
-			return false, nil
-		}
-
-		return providerItem.Rule == "Always", nil
+	switch providerItem.Rule {
+	case "Always":
+		return true, nil
+	case "Internet-Only":
+		return util.IsInternetIp(clientIp), nil
 	}
 
-	return false, nil
+	user, err := GetUserByFields(organization, username)
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, nil
+	}
+
+	failedSigninLimit, _, err := GetFailedSigninConfigByUser(user)
+	if err != nil {
+		return false, err
+	}
+
+	return user.SigninWrongTimes >= failedSigninLimit, nil
 }

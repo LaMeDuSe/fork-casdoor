@@ -17,6 +17,7 @@ package pp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	polargo "github.com/polarsource/polar-go"
 	"github.com/polarsource/polar-go/models/components"
@@ -26,10 +27,15 @@ type PolarPaymentProvider struct {
 	Client *polargo.Polar
 }
 
-func NewPolarPaymentProvider(accessToken string) (*PolarPaymentProvider, error) {
-	client := polargo.New(
-		polargo.WithSecurity(accessToken),
-	)
+func NewPolarPaymentProvider(accessToken string, host string) (*PolarPaymentProvider, error) {
+	opts := []polargo.SDKOption{polargo.WithSecurity(accessToken)}
+	if host != "" {
+		if !strings.HasPrefix(host, "http://") && !strings.HasPrefix(host, "https://") {
+			host = "https://" + host
+		}
+		opts = append(opts, polargo.WithServerURL(host))
+	}
+	client := polargo.New(opts...)
 
 	pp := &PolarPaymentProvider{
 		Client: client,
@@ -41,7 +47,7 @@ func (pp *PolarPaymentProvider) Pay(r *PayReq) (*PayResp, error) {
 	ctx := context.Background()
 
 	// Store product info in metadata for later retrieval
-	description := joinAttachString([]string{r.ProductName, r.ProductDisplayName, r.ProviderName})
+	description := joinAttachString(r)
 
 	metadata := map[string]components.CheckoutCreateMetadata{
 		"payment_name":         components.CreateCheckoutCreateMetadataStr(r.PaymentName),

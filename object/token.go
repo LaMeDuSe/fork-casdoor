@@ -17,11 +17,14 @@ package object
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	"github.com/casdoor/casdoor/util"
 	"github.com/xorm-io/core"
 )
+
+const SessionSigninTokenId = "signinTokenId"
 
 type Token struct {
 	Owner       string `xorm:"varchar(100) notnull pk" json:"owner"`
@@ -29,20 +32,50 @@ type Token struct {
 	CreatedTime string `xorm:"varchar(100)" json:"createdTime"`
 
 	Application  string `xorm:"varchar(100)" json:"application"`
-	Organization string `xorm:"varchar(100)" json:"organization"`
-	User         string `xorm:"varchar(100)" json:"user"`
+	Organization string `xorm:"varchar(100) index(org_user)" json:"organization"`
+	User         string `xorm:"varchar(100) index(org_user)" json:"user"`
 
 	Code             string `xorm:"varchar(100) index" json:"code"`
 	AccessToken      string `xorm:"mediumtext" json:"accessToken"`
 	RefreshToken     string `xorm:"mediumtext" json:"refreshToken"`
+	IdToken          string `xorm:"mediumtext" json:"idToken"`
 	AccessTokenHash  string `xorm:"varchar(100) index" json:"accessTokenHash"`
 	RefreshTokenHash string `xorm:"varchar(100) index" json:"refreshTokenHash"`
+	IdTokenHash      string `xorm:"varchar(100) index" json:"idTokenHash"`
 	ExpiresIn        int    `json:"expiresIn"`
-	Scope            string `xorm:"varchar(100)" json:"scope"`
+	Scope            string `xorm:"varchar(300)" json:"scope"`
 	TokenType        string `xorm:"varchar(100)" json:"tokenType"`
+	GrantType        string `xorm:"varchar(100)" json:"grantType"`
 	CodeChallenge    string `xorm:"varchar(100)" json:"codeChallenge"`
 	CodeIsUsed       bool   `json:"codeIsUsed"`
 	CodeExpireIn     int64  `json:"codeExpireIn"`
+	Resource         string `xorm:"varchar(255)" json:"resource"`           // RFC 8707 Resource Indicator
+	DPoPJkt          string `xorm:"varchar(255) 'dpop_jkt'" json:"dPoPJkt"` // RFC 9449 DPoP JWK thumbprint binding
+	SessionId        string `xorm:"varchar(100) index" json:"sessionId"`    // the Beego session id that minted the token
+	// the RFC 8693 "act" claim of the token as JSON, set when an agent acts for the user
+	Actor string `xorm:"varchar(1000)" json:"actor"`
+}
+
+func (token *Token) GetActor() *ActClaim {
+	if token == nil || token.Actor == "" {
+		return nil
+	}
+	actor := &ActClaim{}
+	if err := json.Unmarshal([]byte(token.Actor), actor); err != nil || actor.Sub == "" {
+		return nil
+	}
+	return actor
+}
+
+func GetActorJson(actor *ActClaim) string {
+	if actor == nil {
+		return ""
+	}
+	data, err := json.Marshal(actor)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func GetTokenCount(owner, organization, field, value string) (int64, error) {
@@ -108,6 +141,26 @@ func GetTokenByAccessToken(accessToken string) (*Token, error) {
 	return &token, nil
 }
 
+// IsUserActive checks whether the token's end user is still allowed to use it, a token issued to
+// a forbidden, soft-deleted or removed user is treated as inactive. The tokens of the
+// "client_credentials" grant are not bound to an end user, so they are always active.
+// Refs: https://datatracker.ietf.org/doc/html/rfc7662
+func (token *Token) IsUserActive() (bool, error) {
+	if token.GrantType == "client_credentials" || token.User == "" {
+		return true, nil
+	}
+
+	user, err := getUser(token.Organization, token.User)
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, nil
+	}
+
+	return !user.IsForbidden && !user.IsDeleted, nil
+}
+
 func GetTokenByRefreshToken(refreshToken string) (*Token, error) {
 	token := Token{RefreshTokenHash: getTokenHash(refreshToken)}
 	existed, err := ormer.Engine.Get(&token)
@@ -121,23 +174,30 @@ func GetTokenByRefreshToken(refreshToken string) (*Token, error) {
 	return &token, nil
 }
 
+func GetTokenByIdToken(idToken string) (*Token, error) {
+	token := Token{IdTokenHash: getTokenHash(idToken)}
+	existed, err := ormer.Engine.Get(&token)
+	if err != nil {
+		return nil, err
+	}
+
+	if !existed {
+		return nil, nil
+	}
+	return &token, nil
+}
+
+// GetTokenByTokenValue looks the token up as the hinted type first and then as the other type (RFC 7009 and RFC 7662 section 2.1)
 func GetTokenByTokenValue(tokenValue, tokenTypeHint string) (*Token, error) {
-	switch tokenTypeHint {
-	case "access_token", "access-token":
-		token, err := GetTokenByAccessToken(tokenValue)
-		if err != nil {
-			return nil, err
-		}
-		if token != nil {
-			return token, nil
-		}
-	case "refresh_token", "refresh-token":
-		token, err := GetTokenByRefreshToken(tokenValue)
-		if err != nil {
-			return nil, err
-		}
-		if token != nil {
-			return token, nil
+	getters := []func(string) (*Token, error){GetTokenByAccessToken, GetTokenByRefreshToken}
+	if tokenTypeHint == "refresh_token" || tokenTypeHint == "refresh-token" {
+		getters[0], getters[1] = getters[1], getters[0]
+	}
+
+	for _, getter := range getters {
+		token, err := getter(tokenValue)
+		if err != nil || token != nil {
+			return token, err
 		}
 	}
 
@@ -145,7 +205,16 @@ func GetTokenByTokenValue(tokenValue, tokenTypeHint string) (*Token, error) {
 }
 
 func updateUsedByCode(token *Token) (bool, error) {
-	affected, err := ormer.Engine.Where("code=?", token.Code).Cols("code_is_used").Update(token)
+	affected, err := ormer.Engine.Where("code=?", token.Code).Cols("code_is_used", "grant_type").Update(token)
+	if err != nil {
+		return false, err
+	}
+
+	return affected != 0, nil
+}
+
+func claimAuthorizationCode(code string) (bool, error) {
+	affected, err := ormer.Engine.Where("code = ? and code_is_used = ?", code, false).Cols("code_is_used").Update(&Token{CodeIsUsed: true})
 	if err != nil {
 		return false, err
 	}
@@ -180,6 +249,9 @@ func (token *Token) popularHashes() {
 	}
 	if token.RefreshTokenHash == "" && token.RefreshToken != "" {
 		token.RefreshTokenHash = getTokenHash(token.RefreshToken)
+	}
+	if token.IdTokenHash == "" && token.IdToken != "" {
+		token.IdTokenHash = getTokenHash(token.IdToken)
 	}
 }
 
@@ -226,11 +298,77 @@ func DeleteToken(token *Token) (bool, error) {
 	return affected != 0, nil
 }
 
+func GetActiveTokensByUser(organization, username string) ([]*Token, error) {
+	tokens := []*Token{}
+	err := ormer.Engine.Where(fmt.Sprintf("organization = ? and %s = ? and expires_in > 0", quoteColumn("user")), organization, username).Find(&tokens)
+	return tokens, err
+}
+
 func ExpireTokenByUser(owner, username string) (bool, error) {
-	affected, err := ormer.Engine.Where("organization = ? and user = ?", owner, username).Cols("expires_in").Update(&Token{ExpiresIn: 0})
+	affected, err := ormer.Engine.Where(fmt.Sprintf("organization = ? and %s = ? and expires_in > 0", quoteColumn("user")), owner, username).Cols("expires_in").Update(&Token{ExpiresIn: 0})
 	if err != nil {
 		return false, err
 	}
 
 	return affected != 0, nil
+}
+
+// ExpireTokensBySessionIds expires the user's tokens minted under the given Beego session ids, so that
+// ending a login session (admin delete, single-session logout) also revokes its OAuth tokens
+func ExpireTokensBySessionIds(owner string, username string, sessionIds []string) (bool, error) {
+	ids := []string{}
+	for _, sessionId := range sessionIds {
+		if sessionId != "" {
+			ids = append(ids, sessionId)
+		}
+	}
+	if len(ids) == 0 {
+		return false, nil
+	}
+
+	affected, err := ormer.Engine.In("session_id", ids).Where(fmt.Sprintf("organization = ? and %s = ? and expires_in > 0", quoteColumn("user")), owner, username).Cols("expires_in").Update(&Token{ExpiresIn: 0})
+	if err != nil {
+		return false, err
+	}
+
+	return affected != 0, nil
+}
+
+func ExpireTokensByApplicationAndSessionIds(owner string, username string, application string, sessionIds []string) (bool, error) {
+	if len(sessionIds) == 0 {
+		return false, nil
+	}
+
+	affected, err := ormer.Engine.In("session_id", sessionIds).Where(fmt.Sprintf("organization = ? and %s = ? and application = ? and expires_in > 0", quoteColumn("user")), owner, username, application).Cols("expires_in").Update(&Token{ExpiresIn: 0})
+	if err != nil {
+		return false, err
+	}
+
+	return affected != 0, nil
+}
+
+// ExpireTokenByUserAndApplication expires the user's tokens in one application, "owner" is the organization of the user
+func ExpireTokenByUserAndApplication(owner string, username string, application string) (bool, error) {
+	affected, err := ormer.Engine.Where(fmt.Sprintf("organization = ? and %s = ? and application = ? and expires_in > 0", quoteColumn("user")), owner, username, application).Cols("expires_in").Update(&Token{ExpiresIn: 0})
+	if err != nil {
+		return false, err
+	}
+
+	return affected != 0, nil
+}
+
+func ExpireTokensByApplication(owner string, application string) error {
+	_, err := ormer.Engine.Where("owner = ? and application = ? and expires_in > 0", owner, application).Cols("expires_in").Update(&Token{ExpiresIn: 0})
+	return err
+}
+
+func updateTokenDPoPBinding(token *Token) error {
+	_, err := ormer.Engine.ID(core.PK{token.Owner, token.Name}).Cols("access_token", "access_token_hash", "id_token", "id_token_hash", "token_type", "dpop_jkt").Update(token)
+	return err
+}
+
+// updateTokenDPoP updates the token_type and dpop_jkt columns for DPoP binding (RFC 9449).
+func updateTokenDPoP(token *Token) error {
+	_, err := ormer.Engine.ID(core.PK{token.Owner, token.Name}).Cols("token_type", "dpop_jkt").Update(token)
+	return err
 }

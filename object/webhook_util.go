@@ -19,13 +19,23 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/casdoor/casdoor/util"
-	"github.com/casvisor/casvisor-go-sdk/casvisorsdk"
 )
 
-func sendWebhook(webhook *Webhook, record *casvisorsdk.Record, extendedUser *User) (int, string, error) {
-	client := &http.Client{}
+var (
+	webhookClient = &http.Client{Timeout: 30 * time.Second}
+	// only global admins manage the webhooks of "built-in", the ones of other organizations
+	// must not reach the intranet, as their responses are readable by the org admins
+	webhookInternetOnlyClient = util.NewInternetOnlyHttpClient(30 * time.Second)
+)
+
+func sendWebhook(webhook *Webhook, record *Record, extendedUser *User) (int, string, error) {
+	client := webhookClient
+	if webhook.Organization != "built-in" {
+		client = webhookInternetOnlyClient
+	}
 	userMap := make(map[string]interface{})
 	var body io.Reader
 
@@ -41,7 +51,7 @@ func sendWebhook(webhook *Webhook, record *casvisorsdk.Record, extendedUser *Use
 		}
 
 		type RecordEx struct {
-			casvisorsdk.Record
+			Record
 			ExtendedUser map[string]interface{} `json:"extendedUser"`
 		}
 
@@ -53,7 +63,7 @@ func sendWebhook(webhook *Webhook, record *casvisorsdk.Record, extendedUser *Use
 		body = strings.NewReader(util.StructToJson(recordEx))
 	} else {
 		type RecordEx struct {
-			casvisorsdk.Record
+			Record
 			ExtendedUser *User `xorm:"-" json:"extendedUser"`
 		}
 		recordEx := &RecordEx{

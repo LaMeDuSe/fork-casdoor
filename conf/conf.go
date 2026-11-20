@@ -15,6 +15,7 @@
 package conf
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"runtime"
@@ -23,6 +24,9 @@ import (
 
 	"github.com/beego/beego/v2/server/web"
 )
+
+//go:embed waf.conf
+var WafConf string
 
 func init() {
 	// this array contains the beego configuration items that may be modified via env
@@ -74,6 +78,16 @@ func GetConfigInt64(key string) (int64, error) {
 	return num, nil
 }
 
+// GetVerificationCodeTimeout falls back to 10 minutes when the config item is missing or invalid
+func GetVerificationCodeTimeout() int64 {
+	timeoutInMinutes, err := GetConfigInt64("verificationCodeTimeout")
+	if err != nil || timeoutInMinutes <= 0 {
+		return 10
+	}
+
+	return timeoutInMinutes
+}
+
 func GetConfigDataSourceName() string {
 	dataSourceName := GetConfigString("dataSourceName")
 	return ReplaceDataSourceNameByDocker(dataSourceName)
@@ -92,6 +106,13 @@ func ReplaceDataSourceNameByDocker(dataSourceName string) string {
 	return dataSourceName
 }
 
+func GetAcceptLanguage(acceptLanguage string) string {
+	if len(acceptLanguage) > 2 {
+		acceptLanguage = acceptLanguage[0:2]
+	}
+	return GetLanguage(acceptLanguage)
+}
+
 func GetLanguage(language string) string {
 	if language == "" || language == "*" {
 		return "en"
@@ -108,10 +129,23 @@ func IsDemoMode() bool {
 	return strings.ToLower(GetConfigString("isDemoMode")) == "true"
 }
 
+func IsDemoDatabase() bool {
+	return GetConfigString("dbName") == "casdoor_demo"
+}
+
 func GetConfigBatchSize() int {
 	res, err := strconv.Atoi(GetConfigString("batchSize"))
 	if err != nil {
 		res = 100
 	}
 	return res
+}
+
+// GetBasePath returns the path prefix Casdoor is served under behind a reverse proxy, like "/casdoor", or "" at the root
+func GetBasePath() string {
+	res := strings.Trim(strings.TrimSpace(GetConfigString("basePath")), "/")
+	if res == "" {
+		return ""
+	}
+	return "/" + res
 }

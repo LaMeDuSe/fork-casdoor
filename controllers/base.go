@@ -16,13 +16,19 @@ package controllers
 
 import (
 	"context"
+	"net/http"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/beego/beego/v2/core/logs"
 	"github.com/beego/beego/v2/server/web"
+	"github.com/casdoor/casdoor/ee/tracing"
+	"github.com/casdoor/casdoor/mcpself"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ApiController
@@ -41,6 +47,73 @@ type SessionData struct {
 	ExpireTime int64
 }
 
+var signinPendingApis = map[string]bool{
+	"/api/login":                  true,
+	"/api/logout":                 true,
+	"/api/sso-logout":             true,
+	"/api/get-account":            true,
+	"/api/get-user-application":   true,
+	"/api/send-verification-code": true,
+}
+
+var passwordPendingApis = map[string]bool{
+	"/api/set-password": true,
+}
+
+var mfaPendingApis = map[string]bool{
+	"/api/check-user-password": true,
+	"/api/mfa/setup/initiate":  true,
+	"/api/mfa/setup/verify":    true,
+	"/api/mfa/setup/enable":    true,
+	"/api/mfa/push/send":       true,
+	"/api/mfa/push/challenge":  true,
+}
+
+func (c *ApiController) Prepare() {
+	urlPath := path.Clean(c.Ctx.Request.URL.Path)
+	if signinPendingApis[urlPath] {
+		return
+	}
+
+	needUpdatePassword, needMfa := c.getSessionSigninPending()
+	if !needUpdatePassword && !needMfa {
+		return
+	}
+	if (needUpdatePassword && passwordPendingApis[urlPath]) || (needMfa && mfaPendingApis[urlPath]) {
+		return
+	}
+
+	c.Ctx.Input.SetData("currentUserId", "")
+}
+
+func (c *ApiController) getSessionSigninPending() (bool, bool) {
+	if credentialUser, _ := c.Ctx.Input.GetData("requestCredentialUser").(string); credentialUser != "" {
+		return false, false
+	}
+	if impersonating, _ := c.Ctx.Input.GetData("impersonating").(bool); impersonating {
+		return false, false
+	}
+
+	userId := c.GetSessionUsername()
+	if userId == "" || object.IsAppUser(userId) {
+		return false, false
+	}
+
+	user, err := object.GetUser(userId)
+	if err != nil {
+		return true, true
+	}
+	if user == nil {
+		return false, false
+	}
+
+	organization, err := object.GetOrganizationByUser(user)
+	if err != nil {
+		return true, true
+	}
+	return user.NeedUpdatePassword, object.IsNeedPromptMfa(organization, user)
+}
+
 func (c *ApiController) IsGlobalAdmin() bool {
 	isGlobalAdmin, _ := c.isGlobalAdmin()
 
@@ -56,9 +129,31 @@ func (c *ApiController) IsAdmin() bool {
 	return isGlobalAdmin || user.IsAdmin
 }
 
+// IsAdminOf checks that the current user administers user2: a global admin does, an
+// org admin only for the users of their own organization.
+func (c *ApiController) IsAdminOf(user2 *object.User) bool {
+	isGlobalAdmin, user := c.isGlobalAdmin()
+	if isGlobalAdmin {
+		return true
+	}
+
+	return user != nil && user2 != nil && user.IsAdmin && user.Owner == user2.Owner
+}
+
+// IsAdminOfOrganization checks that the current user administers the organization: a
+// global admin does, an org admin only their own organization.
+func (c *ApiController) IsAdminOfOrganization(organization string) bool {
+	isGlobalAdmin, user := c.isGlobalAdmin()
+	if isGlobalAdmin {
+		return true
+	}
+
+	return user != nil && user.IsAdmin && user.Owner == organization
+}
+
 func (c *ApiController) IsAdminOrSelf(user2 *object.User) bool {
 	isGlobalAdmin, user := c.isGlobalAdmin()
-	if isGlobalAdmin || (user != nil && user.IsAdmin) {
+	if isGlobalAdmin {
 		return true
 	}
 
@@ -66,20 +161,39 @@ func (c *ApiController) IsAdminOrSelf(user2 *object.User) bool {
 		return false
 	}
 
-	if user.Owner == user2.Owner && user.Name == user2.Name {
+	return user.Owner == user2.Owner && (user.IsAdmin || user.Name == user2.Name)
+}
+
+// requireOrganizationPermission checks that the current user may create an object belonging
+// to the given organization. Global admins can use any organization, other admins are
+// restricted to their own one. It responds with an error and returns false when not allowed.
+func (c *ApiController) requireOrganizationPermission(organization string) bool {
+	isGlobalAdmin, user := c.isGlobalAdmin()
+	if isGlobalAdmin {
 		return true
 	}
-	return false
+
+	if user == nil || user.Owner != organization {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return false
+	}
+
+	return true
 }
 
 func (c *ApiController) isGlobalAdmin() (bool, *object.User) {
 	username := c.GetSessionUsername()
 	if object.IsAppUser(username) {
-		// e.g., "app/app-casnode"
-		return true, nil
+		// e.g., "app/app-casnode", an admin of the application's organization
+		appUser, err := object.GetAppUser(username)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return false, nil
+		}
+		return appUser.IsGlobalAdmin(), appUser
 	}
 
-	user := c.getCurrentUser()
+	user := c.GetCurrentUser()
 	if user == nil {
 		return false, nil
 	}
@@ -87,7 +201,7 @@ func (c *ApiController) isGlobalAdmin() (bool, *object.User) {
 	return user.IsGlobalAdmin(), user
 }
 
-func (c *ApiController) getCurrentUser() *object.User {
+func (c *ApiController) GetCurrentUser() *object.User {
 	var user *object.User
 	var err error
 	userId := c.GetSessionUsername()
@@ -204,9 +318,44 @@ func (c *ApiController) GetSessionOidc() (string, string) {
 	return scope, aud
 }
 
+func (c *ApiController) renewSessionIdForUser(userId string) {
+	if sessionUser, _ := c.GetSession("username").(string); sessionUser == userId {
+		return
+	}
+
+	if c.isSessionCreatedInRequest() {
+		return
+	}
+
+	err := c.SessionRegenerateID()
+	if err != nil {
+		logs.Error("SessionRegenerateID failed, error: %s", err)
+	}
+}
+
+// isSessionCreatedInRequest reports whether the session ID was generated for this request and is already being set in the response
+func (c *ApiController) isSessionCreatedInRequest() bool {
+	sessionId := c.StartSession().SessionID(context.Background())
+	cookies := (&http.Response{Header: c.Ctx.ResponseWriter.Header()}).Cookies()
+	for _, cookie := range cookies {
+		if cookie.Name == web.BConfig.WebConfig.Session.SessionName && cookie.Value == sessionId {
+			return true
+		}
+	}
+	return false
+}
+
 // SetSessionUsername ...
 func (c *ApiController) SetSessionUsername(user string) {
 	c.SetSession("username", user)
+	c.clearSessionOidc()
+}
+
+// clearSessionOidc drops the access token scope and token binding left by AutoSigninFilter, which would otherwise limit an interactive sign-in
+func (c *ApiController) clearSessionOidc() {
+	c.DelSession("scope")
+	c.DelSession("aud")
+	c.DelSession(object.SessionSigninTokenId)
 }
 
 func (c *ApiController) SetSessionToken(accessToken string) {
@@ -244,7 +393,7 @@ func (c *ApiController) setMfaUserSession(userId string) {
 	c.SetSession(object.MfaSessionUserId, userId)
 }
 
-func (c *ApiController) getMfaUserSession() string {
+func (c *ApiController) GetMfaUserSession() string {
 	userId := c.Ctx.Input.CruSession.Get(context.Background(), object.MfaSessionUserId)
 	if userId == nil {
 		return ""
@@ -263,7 +412,7 @@ func (c *ApiController) setExpireForSession(cookieExpireInHours int64) {
 	})
 }
 
-func wrapActionResponse(affected bool, e ...error) *Response {
+func WrapActionResponse(affected bool, e ...error) *Response {
 	if len(e) != 0 && e[0] != nil {
 		return &Response{Status: "error", Msg: e[0].Error()}
 	} else if affected {
@@ -290,4 +439,21 @@ func (c *ApiController) Finish() {
 		}
 	}
 	c.Controller.Finish()
+}
+
+func (c *ApiController) McpResponseError(id interface{}, code int, message string, data interface{}) {
+	resp := mcpself.BuildMcpResponse(id, nil, &mcpself.McpError{
+		Code:    code,
+		Message: message,
+		Data:    data,
+	})
+	c.Ctx.Output.Header("Content-Type", "application/json")
+	c.Data["json"] = resp
+	c.ServeJSON()
+}
+
+// traceStep starts a child span of the request's trace, for the steps of the sign-in
+func (c *ApiController) traceStep(name string, attributes ...attribute.KeyValue) (context.Context, trace.Span) {
+	parent, _ := c.Ctx.Input.GetData("otelContext").(context.Context)
+	return tracing.Start(parent, name, attributes...)
 }

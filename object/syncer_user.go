@@ -39,10 +39,25 @@ func (syncer *Syncer) getCasdoorColumns() []string {
 	for _, tableColumn := range syncer.TableColumns {
 		if tableColumn.CasdoorName != "Id" {
 			v := util.CamelToSnakeCase(tableColumn.CasdoorName)
+			// CasdoorName is org-admin controlled and these values become column names in
+			// an UPDATE SET clause, so drop anything that is not a plain SQL identifier.
+			if !util.FilterSQLIdentifier(v) {
+				continue
+			}
 			res = append(res, v)
 		}
 	}
 	return res
+}
+
+// managesForbidden reports whether the syncer reads the account status from the upstream directory into IsForbidden
+func (syncer *Syncer) managesForbidden() bool {
+	switch syncer.Type {
+	case "WeCom", "DingTalk", "Lark", "Okta", "SCIM", "Azure AD", "Google Workspace", "Active Directory", "AWS IAM", "Keycloak":
+		return true
+	default:
+		return false
+	}
 }
 
 func (syncer *Syncer) updateUser(user *OriginalUser) (bool, error) {
@@ -53,6 +68,13 @@ func (syncer *Syncer) updateUser(user *OriginalUser) (bool, error) {
 func (syncer *Syncer) updateUserForOriginalFields(user *User, key string) (bool, error) {
 	var err error
 	oldUser := User{}
+
+	// key is the snake_cased CasdoorName of the syncer's key column, which an org admin
+	// controls, and it is concatenated into the WHERE clause below, so reject any value
+	// that is not a plain SQL identifier to keep it from injecting SQL into Casdoor's DB.
+	if !util.FilterSQLIdentifier(key) {
+		return false, fmt.Errorf("object.updateUserForOriginalFields() error: invalid key field: %s", key)
+	}
 
 	existed, err := ormer.Engine.Where(key+" = ? and owner = ?", syncer.getUserValue(user, key), user.Owner).Get(&oldUser)
 	if err != nil {
@@ -78,9 +100,50 @@ func (syncer *Syncer) updateUserForOriginalFields(user *User, key string) (bool,
 		}
 	}
 	columns = append(columns, "affiliation", "hash", "pre_hash")
+
+	// Skip password-related columns when the incoming user has no password data.
+	// API-based syncers (DingTalk, WeCom, Lark, etc.) do not provide passwords,
+	// so updating these columns would wipe out locally set passwords.
+	if user.Password == "" {
+		filtered := make([]string, 0, len(columns))
+		for _, col := range columns {
+			if col != "password" && col != "password_salt" && col != "password_type" {
+				filtered = append(filtered, col)
+			}
+		}
+		columns = filtered
+	}
+
+	// Add provider-specific field for API-based syncers to enable login binding
+	// This allows synced users to login via their provider accounts
+	switch syncer.Type {
+	case "WeCom":
+		columns = append(columns, "wecom")
+	case "DingTalk":
+		columns = append(columns, "dingtalk")
+	case "Lark":
+		columns = append(columns, "lark")
+	}
+
+	if syncer.managesForbidden() && !util.InSlice(columns, "is_forbidden") {
+		columns = append(columns, "is_forbidden")
+	}
+
 	affected, err := ormer.Engine.Where(key+" = ? and owner = ?", syncer.getUserValue(&oldUser, key), oldUser.Owner).Cols(columns...).Update(user)
 	if err != nil {
 		return false, err
+	}
+
+	if affected != 0 {
+		triggerUserForbiddenWebhook(&oldUser, user, columns)
+
+		// A user disabled in the upstream directory is forced offline like one forbidden by an admin
+		if isUserAccessRevoked(&oldUser, user, columns) {
+			err = TerminateUserAccess(&oldUser)
+			if err != nil {
+				return true, err
+			}
+		}
 	}
 
 	return affected != 0, nil
@@ -88,11 +151,14 @@ func (syncer *Syncer) updateUserForOriginalFields(user *User, key string) (bool,
 
 func (syncer *Syncer) calculateHash(user *OriginalUser) string {
 	values := []string{}
-	m := syncer.getMapFromOriginalUser(user)
+	m := syncer.GetMapFromOriginalUser(user)
 	for _, tableColumn := range syncer.TableColumns {
 		if tableColumn.IsHashed {
 			values = append(values, m[tableColumn.Name])
 		}
+	}
+	if syncer.managesForbidden() {
+		values = append(values, m["IsForbidden"])
 	}
 
 	s := strings.Join(values, "|")
@@ -107,13 +173,15 @@ func (syncer *Syncer) initAdapter() error {
 func RunSyncUsersJob() {
 	syncers, err := GetSyncers("admin")
 	if err != nil {
-		panic(err)
+		fmt.Printf("RunSyncUsersJob() error: %s\n", err.Error())
+		return
 	}
 
+	// A failing syncer must not stop the others; its error is already in its error text
 	for _, syncer := range syncers {
 		err = addSyncerJob(syncer)
 		if err != nil {
-			panic(err)
+			fmt.Printf("RunSyncUsersJob() failed to start syncer [%s]: %s\n", syncer.GetId(), err.Error())
 		}
 	}
 

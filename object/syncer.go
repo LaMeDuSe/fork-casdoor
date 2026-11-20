@@ -15,7 +15,9 @@
 package object
 
 import (
+	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/casdoor/casdoor/i18n"
 	"github.com/casdoor/casdoor/util"
@@ -39,8 +41,15 @@ type Syncer struct {
 
 	Organization string `xorm:"varchar(100)" json:"organization"`
 	Type         string `xorm:"varchar(100)" json:"type"`
+	// the installed action of kind "syncer" a syncer of type Plugin runs, such as the Authing import
+	Plugin string `xorm:"varchar(100)" json:"plugin"`
+	// more settings of a syncer of type Plugin as the plugin documents them, usually JSON, such as a private key
+	Metadata     string `xorm:"mediumtext" json:"metadata"`
 	DatabaseType string `xorm:"varchar(100)" json:"databaseType"`
 	SslMode      string `xorm:"varchar(100)" json:"sslMode"`
+	SslRootCert  string `xorm:"mediumtext" json:"sslRootCert"`
+	SslCert      string `xorm:"mediumtext" json:"sslCert"`
+	SslKey       string `xorm:"mediumtext" json:"sslKey"`
 	SshType      string `xorm:"varchar(100)" json:"sshType"`
 
 	Host             string         `xorm:"varchar(100)" json:"host"`
@@ -51,6 +60,7 @@ type Syncer struct {
 	SshPort          int            `json:"sshPort"`
 	SshUser          string         `xorm:"varchar(100)" json:"sshUser"`
 	SshPassword      string         `xorm:"varchar(150)" json:"sshPassword"`
+	SshHostKey       string         `xorm:"varchar(1000)" json:"sshHostKey"`
 	Cert             string         `xorm:"varchar(100)" json:"cert"`
 	Database         string         `xorm:"varchar(100)" json:"database"`
 	Table            string         `xorm:"varchar(100)" json:"table"`
@@ -128,6 +138,19 @@ func GetSyncer(id string) (*Syncer, error) {
 	return getSyncer(owner, name)
 }
 
+func GetSyncerByOrganization(id string, organization string) (*Syncer, error) {
+	syncer, err := GetSyncer(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if syncer == nil || syncer.Organization != organization {
+		return nil, nil
+	}
+
+	return syncer, nil
+}
+
 func GetMaskedSyncer(syncer *Syncer, errs ...error) (*Syncer, error) {
 	if len(errs) > 0 && errs[0] != nil {
 		return nil, errs[0]
@@ -139,6 +162,9 @@ func GetMaskedSyncer(syncer *Syncer, errs ...error) (*Syncer, error) {
 
 	if syncer.Password != "" {
 		syncer.Password = "***"
+	}
+	if syncer.SslKey != "" {
+		syncer.SslKey = "***"
 	}
 	return syncer, nil
 }
@@ -170,15 +196,21 @@ func UpdateSyncer(id string, syncer *Syncer, isGlobalAdmin bool, lang string) (b
 	} else if s == nil {
 		return false, nil
 	} else if !isGlobalAdmin && s.Organization != syncer.Organization {
-		return false, fmt.Errorf(i18n.Translate(lang, "auth:Unauthorized operation"))
+		return false, errors.New(i18n.Translate(lang, "auth:Unauthorized operation"))
 	}
 
 	// Close old syncer connections before updating
 	_ = s.Close()
 
-	session := ormer.Engine.ID(core.PK{owner, name}).AllCols()
+	session := ormer.Engine.ID(core.PK{owner, name}).Where("organization = ?", s.Organization).AllCols()
 	if syncer.Password == "***" {
 		syncer.Password = s.Password
+	}
+	if syncer.SslKey == "***" {
+		syncer.SslKey = s.SslKey
+	}
+	if (syncer.SshHost != s.SshHost || syncer.SshPort != s.SshPort) && syncer.SshHostKey == s.SshHostKey {
+		syncer.SshHostKey = ""
 	}
 	affected, err := session.Update(syncer)
 	if err != nil {
@@ -195,6 +227,11 @@ func UpdateSyncer(id string, syncer *Syncer, isGlobalAdmin bool, lang string) (b
 	return affected != 0, nil
 }
 
+func updateSyncerSshHostKey(syncer *Syncer) error {
+	_, err := ormer.Engine.ID(core.PK{syncer.Owner, syncer.Name}).Cols("ssh_host_key").Update(syncer)
+	return err
+}
+
 func updateSyncerErrorText(syncer *Syncer, line string) (bool, error) {
 	s, err := getSyncer(syncer.Owner, syncer.Name)
 	if err != nil {
@@ -205,7 +242,11 @@ func updateSyncerErrorText(syncer *Syncer, line string) (bool, error) {
 		return false, nil
 	}
 
+	const maxErrorTextLen = 65536
 	s.ErrorText = s.ErrorText + line
+	if len(s.ErrorText) > maxErrorTextLen {
+		s.ErrorText = s.ErrorText[len(s.ErrorText)-maxErrorTextLen:]
+	}
 
 	affected, err := ormer.Engine.ID(core.PK{s.Owner, s.Name}).Cols("error_text").Update(s)
 	if err != nil {
@@ -213,6 +254,14 @@ func updateSyncerErrorText(syncer *Syncer, line string) (bool, error) {
 	}
 
 	return affected != 0, nil
+}
+
+func recordSyncerError(syncer *Syncer, err error) {
+	line := fmt.Sprintf("[%s] %s\n", util.GetCurrentTime(), err.Error())
+	_, err2 := updateSyncerErrorText(syncer, line)
+	if err2 != nil {
+		fmt.Printf("recordSyncerError() error: %s\n", err2.Error())
+	}
 }
 
 func AddSyncer(syncer *Syncer) (bool, error) {
@@ -256,7 +305,7 @@ func (syncer *Syncer) getTableColumnsTypeMap() map[string]string {
 	return m
 }
 
-func (syncer *Syncer) getTable() string {
+func (syncer *Syncer) GetTable() string {
 	if syncer.DatabaseType == "mssql" {
 		return fmt.Sprintf("[%s]", syncer.Table)
 	} else {
@@ -264,7 +313,7 @@ func (syncer *Syncer) getTable() string {
 	}
 }
 
-func (syncer *Syncer) getKeyColumn() *TableColumn {
+func (syncer *Syncer) GetKeyColumn() *TableColumn {
 	var column *TableColumn
 	for _, tableColumn := range syncer.TableColumns {
 		if tableColumn.IsKey {
@@ -288,19 +337,39 @@ func (syncer *Syncer) getKeyColumn() *TableColumn {
 }
 
 func (syncer *Syncer) getLocalPrimaryKey() string {
-	column := syncer.getKeyColumn()
+	column := syncer.GetKeyColumn()
 	return util.CamelToSnakeCase(column.CasdoorName)
 }
 
-func (syncer *Syncer) getTargetTablePrimaryKey() string {
-	column := syncer.getKeyColumn()
+func (syncer *Syncer) GetTargetTablePrimaryKey() string {
+	column := syncer.GetKeyColumn()
 	return column.Name
 }
 
+var errSyncerRunning = errors.New("the syncer is already running")
+
+var syncerLocks sync.Map
+
 func RunSyncer(syncer *Syncer) error {
+	value, _ := syncerLocks.LoadOrStore(syncer.GetId(), &sync.Mutex{})
+	lock := value.(*sync.Mutex)
+	if !lock.TryLock() {
+		return errSyncerRunning
+	}
+	defer lock.Unlock()
+
 	err := syncer.initAdapter()
 	if err != nil {
+		_ = syncer.Close()
 		return err
+	}
+
+	// Sync groups first so that the groups referenced by the synced users already exist
+	err = syncer.syncGroups()
+	if err != nil {
+		// Log error but don't fail the entire sync
+		recordSyncerError(syncer, err)
+		fmt.Printf("Warning: syncGroups() error: %s\n", err.Error())
 	}
 
 	return syncer.syncUsers()
@@ -312,8 +381,12 @@ func TestSyncer(syncer Syncer) error {
 		return err
 	}
 
-	if syncer.Password == "***" {
+	// the syncer may not be created yet when the connection is tested from the syncer add page
+	if syncer.Password == "***" && oldSyncer != nil {
 		syncer.Password = oldSyncer.Password
+	}
+	if syncer.SslKey == "***" && oldSyncer != nil {
+		syncer.SslKey = oldSyncer.SslKey
 	}
 
 	provider := GetSyncerProvider(&syncer)

@@ -16,6 +16,7 @@ package object
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/dypnsapi"
@@ -77,10 +78,35 @@ func (c *PnvsSmsClient) SendMessage(param map[string]string, targetPhoneNumber .
 
 	if response.Code != "OK" {
 		if response.Message != "" {
-			return fmt.Errorf(response.Message)
+			return errors.New(response.Message)
 		}
 		return fmt.Errorf("PNVS SMS send failed with code: %s", response.Code)
 	}
 
 	return nil
+}
+
+// GetMobile exchanges the token that the one-click login SDK got on the phone for its number
+func (c *PnvsSmsClient) GetMobile(accessToken string) (string, error) {
+	request := dypnsapi.CreateGetMobileRequest()
+	request.Scheme = "https"
+	request.AccessToken = accessToken
+
+	response, err := c.core.GetMobile(request)
+	if err != nil {
+		return "", err
+	}
+
+	if response.Code != "OK" {
+		if response.Message != "" {
+			return "", fmt.Errorf("PNVS GetMobile failed with code: %s, %s", response.Code, response.Message)
+		}
+		return "", fmt.Errorf("PNVS GetMobile failed with code: %s", response.Code)
+	}
+
+	if response.GetMobileResultDTO.Mobile == "" {
+		return "", fmt.Errorf("PNVS GetMobile returned no mobile")
+	}
+
+	return response.GetMobileResultDTO.Mobile, nil
 }

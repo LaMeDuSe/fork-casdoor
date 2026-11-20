@@ -21,23 +21,34 @@ import (
 	"github.com/casdoor/casdoor/xlsx"
 )
 
-func getPermissionMap(owner string) (map[string]*Permission, error) {
+func getPermissionMap(permissions []*Permission) (map[string]*Permission, error) {
 	m := map[string]*Permission{}
 
-	permissions, err := GetPermissions(owner)
-	if err != nil {
-		return nil, err
-	}
-
+	owners := map[string]bool{}
 	for _, permission := range permissions {
-		m[permission.GetId()] = permission
+		if owners[permission.Owner] {
+			continue
+		}
+		owners[permission.Owner] = true
+
+		oldPermissions, err := GetPermissions(permission.Owner)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, oldPermission := range oldPermissions {
+			m[oldPermission.GetId()] = oldPermission
+		}
 	}
 
-	return m, err
+	return m, nil
 }
 
-func UploadPermissions(owner string, path string) (bool, error) {
-	table := xlsx.ReadXlsxFile(path)
+func UploadPermissions(path string, organization string, lang string) (bool, error) {
+	table, err := xlsx.ReadXlsxFile(path)
+	if err != nil {
+		return false, err
+	}
 
 	if len(table) == 0 {
 		return false, fmt.Errorf("empty table")
@@ -55,7 +66,16 @@ func UploadPermissions(owner string, path string) (bool, error) {
 		return false, err
 	}
 
-	oldPermissionMap, err := getPermissionMap(owner)
+	uploadedPermissions = filterInvalidUploadedPermissions(uploadedPermissions)
+
+	for _, permission := range uploadedPermissions {
+		err = checkUploadedOwner(&permission.Owner, permission.Name, organization, lang)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	oldPermissionMap, err := getPermissionMap(uploadedPermissions)
 	if err != nil {
 		return false, err
 	}
@@ -77,4 +97,21 @@ func UploadPermissions(owner string, path string) (bool, error) {
 	}
 
 	return affected, nil
+}
+
+func filterInvalidUploadedPermissions(permissions []*Permission) []*Permission {
+	res := make([]*Permission, 0, len(permissions))
+	for _, permission := range permissions {
+		if permission == nil {
+			continue
+		}
+
+		if strings.TrimSpace(permission.Owner) == "" || strings.TrimSpace(permission.Name) == "" {
+			continue
+		}
+
+		res = append(res, permission)
+	}
+
+	return res
 }

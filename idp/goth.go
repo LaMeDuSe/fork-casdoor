@@ -92,7 +92,7 @@ type GothIdProvider struct {
 	CodeVerifier string
 }
 
-func NewGothIdProvider(providerType string, clientId string, clientSecret string, clientId2 string, clientSecret2 string, redirectUrl string, hostUrl string) (*GothIdProvider, error) {
+func NewGothIdProvider(providerType string, subType string, clientId string, clientSecret string, clientId2 string, clientSecret2 string, redirectUrl string, hostUrl string) (*GothIdProvider, error) {
 	var idp GothIdProvider
 	switch providerType {
 	case "Amazon":
@@ -306,9 +306,13 @@ func NewGothIdProvider(providerType string, clientId string, clientSecret string
 			Provider: patreon.New(clientId, clientSecret, redirectUrl),
 			Session:  &patreon.Session{},
 		}
-	case "Paypal":
+	case "Paypal", "PayPal":
+		paypalOidcUrl := "https://www.paypal.com/webapps/auth/protocol/openidconnect/v1"
+		if subType == "Sandbox" {
+			paypalOidcUrl = "https://www.sandbox.paypal.com/webapps/auth/protocol/openidconnect/v1"
+		}
 		idp = GothIdProvider{
-			Provider: paypal.New(clientId, clientSecret, redirectUrl),
+			Provider: paypal.NewCustomisedURL(clientId, clientSecret, redirectUrl, paypalOidcUrl+"/authorize", paypalOidcUrl+"/tokenservice", paypalOidcUrl+"/userinfo"),
 			Session:  &paypal.Session{},
 		}
 	case "SalesForce":
@@ -526,6 +530,7 @@ func getUser(gothUser goth.User, provider string) *UserInfo {
 		}
 	}
 	user.Extra = extra
+	user.EmailVerified = isGothEmailVerified(gothUser, provider)
 
 	// Some idp return an empty Name
 	// so construct the Name with firstname and lastname or nickname
@@ -550,6 +555,47 @@ func getUser(gothUser goth.User, provider string) *UserInfo {
 		user.Username = util.GetUsernameFromEmail(user.Email)
 	}
 	return &user
+}
+
+// gothEmailVerifiedProviders only ever return an email the account has confirmed.
+var gothEmailVerifiedProviders = map[string]bool{
+	"facebook": true,
+	"github":   true,
+	"gitlab":   true,
+	"google":   true,
+	"linkedin": true,
+	"slack":    true,
+	"yahoo":    true,
+}
+
+// isGothEmailVerified reports whether the provider vouches for gothUser.Email, from the
+// email_verified / verified claim it returned or because it never returns unverified ones.
+func isGothEmailVerified(gothUser goth.User, provider string) bool {
+	if gothUser.Email == "" {
+		return false
+	}
+	for _, key := range []string{"email_verified", "verified_email", "verified"} {
+		switch v := gothUser.RawData[key].(type) {
+		case bool:
+			return v
+		case string:
+			return v == "true"
+		}
+	}
+	if provider == "azureadv2" || provider == "microsoftonline" {
+		return isMicrosoftEmailVerified(gothUser)
+	}
+	return gothEmailVerifiedProviders[provider]
+}
+
+// isMicrosoftEmailVerified trusts the Graph mail only when it is the user's own UPN, whose
+// domain the tenant has proven it owns; the mail attribute alone can be set to anything.
+func isMicrosoftEmailVerified(gothUser goth.User) bool {
+	upn, _ := gothUser.RawData["userPrincipalName"].(string)
+	if upn == "" || strings.Contains(upn, "#EXT#") {
+		return false
+	}
+	return strings.EqualFold(gothUser.Email, upn)
 }
 
 func getName(firstName, lastName string) string {

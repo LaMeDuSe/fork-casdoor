@@ -15,20 +15,20 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
-	"github.com/google/uuid"
 )
 
 // MfaSetupInitiate
 // @Title MfaSetupInitiate
 // @Tag MFA API
 // @Description setup MFA
-// @param owner	form	string	true	"owner of user"
-// @param name	form	string	true	"name of user"
-// @param type	form	string	true	"MFA auth type"
+// @Param   mfaType formData string true "The type of MFA to set up (app/sms/email)"
+// @Param   owner   formData string true "The owner of the user"
+// @Param   name    formData string true "The name of the user"
 // @Success 200 {object} controllers.Response The Response object
 // @router /mfa/setup/initiate [post]
 func (c *ApiController) MfaSetupInitiate() {
@@ -45,6 +45,7 @@ func (c *ApiController) MfaSetupInitiate() {
 	MfaUtil := object.GetMfaUtil(mfaType, nil)
 	if MfaUtil == nil {
 		c.ResponseError("Invalid auth type")
+		return
 	}
 
 	user, err := object.GetUser(userId)
@@ -64,6 +65,11 @@ func (c *ApiController) MfaSetupInitiate() {
 		return
 	}
 
+	if !object.IsMfaTypeAllowed(organization, user, mfaType) {
+		c.ResponseError(fmt.Sprintf("the MFA type: %s is not allowed by the MFA items", mfaType))
+		return
+	}
+
 	issuer := ""
 	if organization != nil && organization.DisplayName != "" {
 		issuer = organization.DisplayName
@@ -77,7 +83,7 @@ func (c *ApiController) MfaSetupInitiate() {
 		return
 	}
 
-	recoveryCode := uuid.NewString()
+	recoveryCode := util.GenerateUUID()
 	mfaProps.RecoveryCodes = []string{recoveryCode}
 	mfaProps.MfaRememberInHours = organization.MfaRememberInHours
 
@@ -89,8 +95,8 @@ func (c *ApiController) MfaSetupInitiate() {
 // @Title MfaSetupVerify
 // @Tag MFA API
 // @Description setup verify totp
-// @param	secret		form	string	true	"MFA secret"
-// @param	passcode	form 	string 	true	"MFA passcode"
+// @Param   secret   formData string true "The MFA secret"
+// @Param   passcode formData string true "The MFA passcode"
 // @Success 200 {object} controllers.Response The Response object
 // @router /mfa/setup/verify [post]
 func (c *ApiController) MfaSetupVerify() {
@@ -161,21 +167,58 @@ func (c *ApiController) MfaSetupVerify() {
 		return
 	}
 
-	err := mfaUtil.SetupVerify(passcode)
+	user, err := object.GetUser(util.GetId(c.Ctx.Request.Form.Get("owner"), c.Ctx.Request.Form.Get("name")))
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if user == nil {
+		c.ResponseError("User doesn't exist")
+		return
+	}
+
+	verifiedDest := getMfaSetupDest(mfaType, dest, countryCode)
+	err = object.VerifyMfaWithLimit(user, func() error { return mfaUtil.SetupVerify(passcode, c.GetAcceptLanguage()) }, c.GetAcceptLanguage())
 	if err != nil {
 		c.ResponseError(err.Error())
 	} else {
+		c.SetSession(mfaSetupVerifiedDestSession, verifiedDest)
 		c.ResponseOk(http.StatusText(http.StatusOK))
 	}
+}
+
+const mfaSetupVerifiedDestSession = "mfaSetupVerifiedDest"
+
+func getMfaSetupDest(mfaType string, dest string, countryCode string) string {
+	if mfaType == object.SmsType {
+		dest, _ = util.GetE164Number(dest, countryCode)
+	}
+	return mfaType + ":" + dest
+}
+
+func (c *ApiController) checkMfaSetupDest(user *object.User, mfaType string) bool {
+	if (mfaType != object.SmsType && mfaType != object.EmailType) || c.IsAdminOf(user) {
+		return true
+	}
+
+	dest := user.Email
+	if mfaType == object.SmsType {
+		dest = user.Phone
+	}
+	if c.GetSession(mfaSetupVerifiedDestSession) != getMfaSetupDest(mfaType, dest, user.CountryCode) {
+		c.ResponseError("the MFA destination has not been verified")
+		return false
+	}
+	return true
 }
 
 // MfaSetupEnable
 // @Title MfaSetupEnable
 // @Tag MFA API
 // @Description enable totp
-// @param owner	form	string	true	"owner of user"
-// @param name	form	string	true	"name of user"
-// @param type	form	string	true	"MFA auth type"
+// @Param   owner   formData string true "The owner of the user"
+// @Param   name    formData string true "The name of the user"
+// @Param   mfaType formData string true "The MFA auth type"
 // @Success 200 {object} controllers.Response The Response object
 // @router /mfa/setup/enable [post]
 func (c *ApiController) MfaSetupEnable() {
@@ -184,7 +227,7 @@ func (c *ApiController) MfaSetupEnable() {
 	mfaType := c.Ctx.Request.Form.Get("mfaType")
 	secret := c.Ctx.Request.Form.Get("secret")
 	dest := c.Ctx.Request.Form.Get("dest")
-	countryCode := c.Ctx.Request.Form.Get("secret")
+	countryCode := c.Ctx.Request.Form.Get("countryCode")
 	recoveryCodes := c.Ctx.Request.Form.Get("recoveryCodes")
 
 	user, err := object.GetUser(util.GetId(owner, name))
@@ -265,21 +308,37 @@ func (c *ApiController) MfaSetupEnable() {
 		return
 	}
 
+	organization, err := object.GetOrganizationByUser(user)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if !object.IsMfaTypeAllowed(organization, user, mfaType) {
+		c.ResponseError(fmt.Sprintf("the MFA type: %s is not allowed by the MFA items", mfaType))
+		return
+	}
+
+	if !c.checkMfaSetupDest(user, mfaType) {
+		return
+	}
+
 	err = mfaUtil.Enable(user)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
 	}
 
+	c.DelSession(mfaSetupVerifiedDestSession)
 	c.ResponseOk(http.StatusText(http.StatusOK))
 }
 
 // DeleteMfa
 // @Title DeleteMfa
 // @Tag MFA API
-// @Description: Delete MFA
-// @param owner	form	string	true	"owner of user"
-// @param name	form	string	true	"name of user"
+// @Description Delete MFA
+// @Param   owner formData string true "The owner of the user"
+// @Param   name  formData string true "The name of the user"
 // @Success 200 {object} controllers.Response The Response object
 // @router /delete-mfa/ [post]
 func (c *ApiController) DeleteMfa() {
@@ -309,10 +368,10 @@ func (c *ApiController) DeleteMfa() {
 // SetPreferredMfa
 // @Title SetPreferredMfa
 // @Tag MFA API
-// @Description: Set specific Mfa Preferred
-// @param owner	form	string	true	"owner of user"
-// @param name	form	string	true	"name of user"
-// @param id	form	string	true	"id of user's MFA props"
+// @Description Set preferred MFA
+// @Param   mfaType formData string true "The MFA type to set as preferred"
+// @Param   owner   formData string true "The owner of the user"
+// @Param   name    formData string true "The name of the user"
 // @Success 200 {object} controllers.Response The Response object
 // @router /set-preferred-mfa [post]
 func (c *ApiController) SetPreferredMfa() {

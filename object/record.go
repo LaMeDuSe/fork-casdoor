@@ -15,29 +15,90 @@
 package object
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"regexp"
 	"strings"
 
 	"github.com/beego/beego/v2/server/web/context"
 	"github.com/casdoor/casdoor/conf"
 	"github.com/casdoor/casdoor/util"
-	"github.com/casvisor/casvisor-go-sdk/casvisorsdk"
 )
 
 var (
-	logPostOnly   bool
-	passwordRegex *regexp.Regexp
+	logPostOnly          bool
+	secretJsonRegex      *regexp.Regexp
+	secretFormRegex      *regexp.Regexp
+	secretMultipartRegex *regexp.Regexp
 )
+
+var secretRecordKeys = []string{
+	"password", "oldPassword", "newPassword", "masterPassword", "defaultPassword", "passwordSalt", "passwordObfuscatorKey",
+	"clientSecret", "client_secret", "clientSecret2", "accessSecret", "secret", "secretKey", "privateKey", "sslKey", "kerberosKeytab",
+	"token", "accessToken", "access_token", "refreshToken", "refresh_token", "idToken", "id_token", "registrationAccessToken",
+	"originalToken", "originalRefreshToken", "totpSecret", "masterVerificationCode",
+	"code_verifier", "passcode", "recoveryCode", "recoveryCodes",
+}
+
+// secretRecordKeyPatterns match the per-provider OAuth tokens kept in a user's properties
+var secretRecordKeyPatterns = []string{`oauth_[^"&=]*_(?:accessToken|refreshToken)`}
+
+var secretRecordQueries = append([]string{"id_token_hint"}, secretRecordKeys...)
+
+// alwaysLoggedActions lists the actions that are always recorded, even for GET
+// requests when "logPostOnly" is enabled. These endpoints accept GET by design
+// (OIDC RP-Initiated Logout navigates the browser to them), so filtering them
+// out would silently drop security-relevant audit rows and their webhooks.
+// Add an action here when losing its audit trail matters more than the noise.
+var alwaysLoggedActions = map[string]bool{
+	"logout":     true,
+	"sso-logout": true,
+	// handing out the password of a managed account
+	"get-form-fill-account": true,
+	// handing out the password of a privileged account
+	"reveal-privileged-password": true,
+}
 
 func init() {
 	logPostOnly = conf.GetConfigBool("logPostOnly")
-	passwordRegex = regexp.MustCompile("\"password\":\"([^\"]*?)\"")
+	keys := strings.Join(append(append([]string{}, secretRecordKeys...), secretRecordKeyPatterns...), "|")
+	jsonString := `"(?:[^"\\]|\\.)*"`
+	secretJsonRegex = regexp.MustCompile(`(?i)"(` + keys + `)"\s*:\s*(?:` + jsonString + `|\[(?:` + jsonString + `|[^\]"])*\])`)
+	secretFormRegex = regexp.MustCompile(`(?i)(^|&)(` + keys + `)=[^&]*`)
+	secretMultipartRegex = regexp.MustCompile(`(?i)(name="(?:` + keys + `)"\r?\n\r?\n)[^\r\n]*`)
 }
 
 type Record struct {
-	casvisorsdk.Record
+	Id int `xorm:"int notnull pk autoincr" json:"id"`
+
+	Owner       string `xorm:"varchar(100) index" json:"owner"`
+	Name        string `xorm:"varchar(100) index" json:"name"`
+	CreatedTime string `xorm:"varchar(100)" json:"createdTime"`
+
+	Organization string `xorm:"varchar(100)" json:"organization"`
+	ClientIp     string `xorm:"varchar(100)" json:"clientIp"`
+	User         string `xorm:"varchar(100)" json:"user"`
+	Method       string `xorm:"varchar(100)" json:"method"`
+	RequestUri   string `xorm:"varchar(1000)" json:"requestUri"`
+	Action       string `xorm:"varchar(1000)" json:"action"`
+	Language     string `xorm:"varchar(100)" json:"language"`
+
+	Object     string `xorm:"mediumtext" json:"object"`
+	Response   string `xorm:"mediumtext" json:"response"`
+	StatusCode int    `json:"statusCode"`
+
+	Detail string `xorm:"varchar(100)" json:"detail"`
+
+	IsTriggered bool `json:"isTriggered"`
+
+	// the hash chain of an organization with tamper-proof records, see record_chain.go
+	PrevHash string `xorm:"varchar(100)" json:"prevHash"`
+	Hash     string `xorm:"varchar(100)" json:"hash"`
 }
 
 type Response struct {
@@ -47,18 +108,56 @@ type Response struct {
 	Data interface{} `json:"data"`
 }
 
-func maskPassword(recordString string) string {
-	return passwordRegex.ReplaceAllString(recordString, "\"password\":\"***\"")
+func maskSecrets(recordString string) string {
+	recordString = secretJsonRegex.ReplaceAllString(recordString, `"$1":"***"`)
+	recordString = secretFormRegex.ReplaceAllString(recordString, "${1}${2}=***")
+	return secretMultipartRegex.ReplaceAllString(recordString, "${1}***")
 }
 
-func NewRecord(ctx *context.Context) (*casvisorsdk.Record, error) {
+// summarizeMultipartBody keeps the form fields of a multipart request and replaces the content
+// of each uploaded file with its size, so that uploads do not store whole files in "record".
+func summarizeMultipartBody(contentType string, body []byte) (string, bool) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || !strings.HasPrefix(mediaType, "multipart/") || params["boundary"] == "" {
+		return "", false
+	}
+
+	var sb strings.Builder
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", false
+		}
+
+		content, err := io.ReadAll(part)
+		if err != nil {
+			return "", false
+		}
+
+		sb.WriteString("--" + params["boundary"] + "\r\n")
+		if part.FileName() != "" {
+			sb.WriteString(fmt.Sprintf("Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n\r\n[%d bytes]\r\n", part.FormName(), part.FileName(), len(content)))
+		} else {
+			sb.WriteString(fmt.Sprintf("Content-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n", part.FormName(), content))
+		}
+	}
+	sb.WriteString("--" + params["boundary"] + "--\r\n")
+	return sb.String(), true
+}
+
+func NewRecord(ctx *context.Context) (*Record, error) {
 	clientIp := strings.Replace(util.GetClientIpFromRequest(ctx.Request), ": ", "", -1)
 	action := strings.Replace(ctx.Request.URL.Path, "/api/", "", -1)
 	if strings.HasPrefix(action, "notify-payment") {
 		action = "notify-payment"
 	}
 
-	requestUri := util.FilterQuery(ctx.Request.RequestURI, []string{"accessToken"})
+	// "id_token_hint" carries a JWT, so it is dropped instead of being persisted in the audit row.
+	requestUri := util.FilterQuery(ctx.Request.RequestURI, secretRecordQueries)
 	if len(requestUri) > 1000 {
 		requestUri = requestUri[0:1000]
 	}
@@ -66,7 +165,10 @@ func NewRecord(ctx *context.Context) (*casvisorsdk.Record, error) {
 	object := ""
 	if ctx.Input.RequestBody != nil && len(ctx.Input.RequestBody) != 0 {
 		object = string(ctx.Input.RequestBody)
-		object = maskPassword(object)
+		if summary, ok := summarizeMultipartBody(ctx.Request.Header.Get("Content-Type"), ctx.Input.RequestBody); ok {
+			object = summary
+		}
+		object = maskSecrets(object)
 	}
 
 	respBytes, err := json.Marshal(ctx.Input.Data()["json"])
@@ -93,13 +195,9 @@ func NewRecord(ctx *context.Context) (*casvisorsdk.Record, error) {
 		dataResp = fmt.Sprintf(", data:%s", string(dataByte))
 	}
 
-	language := ctx.Request.Header.Get("Accept-Language")
-	if len(language) > 2 {
-		language = language[0:2]
-	}
-	languageCode := conf.GetLanguage(language)
+	languageCode := conf.GetAcceptLanguage(ctx.Request.Header.Get("Accept-Language"))
 
-	record := casvisorsdk.Record{
+	record := Record{
 		Name:        util.GenerateId(),
 		CreatedTime: util.GetCurrentTime(),
 		ClientIp:    clientIp,
@@ -116,57 +214,80 @@ func NewRecord(ctx *context.Context) (*casvisorsdk.Record, error) {
 	return &record, nil
 }
 
-func addRecord(record *casvisorsdk.Record) (int64, error) {
+// SetUser sets the record's organization and user from the subject's user ID. An M2M
+// credential ("app/<name>" or "app-dcr/<name>") is recorded in the application's organization,
+// because the pseudo organizations "app" and "app-dcr" are shown by no organization's audit log.
+func (record *Record) SetUser(userId string) error {
+	if IsAppUser(userId) {
+		_, name := util.GetOwnerAndNameFromIdNoCheck(userId)
+		application, err := getAppUserApplication(name)
+		if err != nil {
+			return err
+		}
+
+		if application != nil {
+			record.Organization, record.User = application.Organization, userId
+			return nil
+		}
+	}
+
+	owner, name, err := util.GetOwnerAndNameFromIdWithError(userId)
+	if err != nil {
+		return err
+	}
+
+	record.Organization, record.User = owner, name
+	return nil
+}
+
+func addRecord(record *Record) (int64, error) {
 	affected, err := ormer.Engine.Insert(record)
 	return affected, err
 }
 
-func AddRecord(record *casvisorsdk.Record) bool {
+func AddRecord(record *Record) bool {
 	if logPostOnly {
-		if record.Method == "GET" {
+		if record.Method == "GET" && !alwaysLoggedActions[record.Action] {
 			return false
 		}
 	}
 
-	if record.Organization == "app" {
-		return false
+	// an empty owner matches no audit log query and no retention policy
+	if record.Organization == "" {
+		record.Organization = "built-in"
 	}
-
 	record.Owner = record.Organization
-	record.Object = maskPassword(record.Object)
+	record.Object = maskSecrets(record.Object)
+
+	record.IsTriggered = true
+	affected, err := addChainedRecord(record)
+	if err != nil {
+		panic(err)
+	}
 
 	errWebhook := SendWebhooks(record)
-	if errWebhook == nil {
-		record.IsTriggered = true
-	} else {
+	if errWebhook != nil {
 		fmt.Println(errWebhook)
-	}
-
-	if casvisorsdk.GetClient() == nil {
-		affected, err := addRecord(record)
+		record.IsTriggered = false
+		_, err = ormer.Engine.ID(record.Id).Cols("is_triggered").Update(record)
 		if err != nil {
-			panic(err)
+			fmt.Println(err)
 		}
-
-		return affected != 0
 	}
 
-	affected, err := casvisorsdk.AddRecord(record)
-	if err != nil {
-		fmt.Printf("AddRecord() error: %s", err.Error())
-	}
+	sendAuditRecord(record)
 
-	return affected
+	return affected != 0
 }
 
-func GetRecordCount(field, value string, filterRecord *casvisorsdk.Record) (int64, error) {
+func GetRecordCount(field, value string, filterRecord *Record) (int64, error) {
 	session := GetSession("", -1, -1, field, value, "", "")
 	return session.Count(filterRecord)
 }
 
-func GetRecords() ([]*casvisorsdk.Record, error) {
-	records := []*casvisorsdk.Record{}
-	err := ormer.Engine.Desc("id").Find(&records)
+func GetRecords(organization string) ([]*Record, error) {
+	records := []*Record{}
+	err := ormer.Engine.Desc("id").Find(&records, &Record{Organization: organization})
 	if err != nil {
 		return records, err
 	}
@@ -174,8 +295,8 @@ func GetRecords() ([]*casvisorsdk.Record, error) {
 	return records, nil
 }
 
-func GetPaginationRecords(offset, limit int, field, value, sortField, sortOrder string, filterRecord *casvisorsdk.Record) ([]*casvisorsdk.Record, error) {
-	records := []*casvisorsdk.Record{}
+func GetPaginationRecords(offset, limit int, field, value, sortField, sortOrder string, filterRecord *Record) ([]*Record, error) {
+	records := []*Record{}
 
 	if sortField == "" || sortOrder == "" {
 		sortField = "id"
@@ -191,8 +312,8 @@ func GetPaginationRecords(offset, limit int, field, value, sortField, sortOrder 
 	return records, nil
 }
 
-func GetRecordsByField(record *casvisorsdk.Record) ([]*casvisorsdk.Record, error) {
-	records := []*casvisorsdk.Record{}
+func GetRecordsByField(record *Record) ([]*Record, error) {
+	records := []*Record{}
 	err := ormer.Engine.Find(&records, record)
 	if err != nil {
 		return records, err
@@ -201,8 +322,8 @@ func GetRecordsByField(record *casvisorsdk.Record) ([]*casvisorsdk.Record, error
 	return records, nil
 }
 
-func CopyRecord(record *casvisorsdk.Record) *casvisorsdk.Record {
-	res := &casvisorsdk.Record{
+func CopyRecord(record *Record) *Record {
+	res := &Record{
 		Owner:        record.Owner,
 		Name:         record.Name,
 		CreatedTime:  record.CreatedTime,
@@ -215,6 +336,7 @@ func CopyRecord(record *casvisorsdk.Record) *casvisorsdk.Record {
 		Language:     record.Language,
 		Object:       record.Object,
 		Response:     record.Response,
+		Detail:       record.Detail,
 		IsTriggered:  record.IsTriggered,
 	}
 	return res
@@ -248,7 +370,7 @@ func getFilteredWebhooks(webhooks []*Webhook, organization string, action string
 	return res
 }
 
-func addWebhookRecord(webhook *Webhook, record *casvisorsdk.Record, statusCode int, respBody string, sendError error) error {
+func addWebhookRecord(webhook *Webhook, record *Record, statusCode int, respBody string, sendError error) error {
 	if statusCode == 200 {
 		return nil
 	}
@@ -257,7 +379,12 @@ func addWebhookRecord(webhook *Webhook, record *casvisorsdk.Record, statusCode i
 		respBody = respBody[0:300]
 	}
 
-	webhookRecord := &casvisorsdk.Record{
+	requestUri := webhook.Url
+	if webhook.isProviderType() {
+		requestUri = fmt.Sprintf("%s: %s", webhook.Type, webhook.Provider)
+	}
+
+	webhookRecord := &Record{
 		Owner:        record.Owner,
 		Name:         util.GenerateId(),
 		CreatedTime:  util.GetCurrentTime(),
@@ -266,7 +393,7 @@ func addWebhookRecord(webhook *Webhook, record *casvisorsdk.Record, statusCode i
 
 		Method:      webhook.Method,
 		Action:      "send-webhook",
-		RequestUri:  webhook.Url,
+		RequestUri:  requestUri,
 		StatusCode:  statusCode,
 		Response:    respBody,
 		Language:    record.Language,
@@ -303,7 +430,7 @@ func filterRecordObject(object string, objectFields []string) string {
 	return util.StructToJson(filteredObject)
 }
 
-func SendWebhooks(record *casvisorsdk.Record) error {
+func SendWebhooks(record *Record) error {
 	webhooks, err := getWebhooksByOrganization("")
 	if err != nil {
 		return err
@@ -320,30 +447,39 @@ func SendWebhooks(record *casvisorsdk.Record) error {
 		}
 
 		var user *User
-		if webhook.IsUserExtended {
+		if webhook.isProviderType() {
+			if isFailedRecord(record) {
+				continue
+			}
+
+			user, err = getWebhookReceiverUser(record)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("webhook %s: failed to get user: %w", webhook.GetId(), err))
+				continue
+			}
+		} else if webhook.IsUserExtended {
 			user, err = getUser(record.Organization, record.User)
 			if err != nil {
-				errs = append(errs, err)
+				errs = append(errs, fmt.Errorf("webhook %s: failed to get user: %w", webhook.GetId(), err))
 				continue
 			}
 
 			user, err = GetMaskedUser(user, false, err)
 			if err != nil {
-				errs = append(errs, err)
+				errs = append(errs, fmt.Errorf("webhook %s: failed to mask user: %w", webhook.GetId(), err))
 				continue
 			}
 		}
 
-		statusCode, respBody, err := sendWebhook(webhook, &record2, user)
+		// Create webhook event for tracking and retry
+		_, err = CreateWebhookEventFromRecord(webhook, &record2, user)
 		if err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("webhook %s: failed to create event: %w", webhook.GetId(), err))
+			continue
 		}
 
-		err = addWebhookRecord(webhook, &record2, statusCode, respBody, err)
-		if err != nil {
-			errs = append(errs, err)
-		}
-
+		// The webhook will be delivered by the background worker
+		// This provides automatic retry and replay capability
 	}
 
 	if len(errs) > 0 {
@@ -351,7 +487,7 @@ func SendWebhooks(record *casvisorsdk.Record) error {
 		for _, err := range errs {
 			errStrings = append(errStrings, err.Error())
 		}
-		return fmt.Errorf(strings.Join(errStrings, " | "))
+		return errors.New(strings.Join(errStrings, " | "))
 	}
 	return nil
 }

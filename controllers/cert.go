@@ -18,9 +18,27 @@ import (
 	"encoding/json"
 
 	"github.com/beego/beego/v2/core/utils/pagination"
+	"github.com/casdoor/casdoor/ee"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 )
+
+// getMaskedCerts hides the private keys of the certs the current user doesn't
+// administer: a global admin sees them all, an org admin only those of their own
+// organization, never the global "admin" certs listed alongside them.
+func (c *ApiController) getMaskedCerts(certs []*object.Cert) []*object.Cert {
+	isGlobalAdmin, user := c.isGlobalAdmin()
+	if isGlobalAdmin {
+		return certs
+	}
+
+	for _, cert := range certs {
+		if user == nil || !user.IsAdmin || cert.Owner != user.Owner {
+			object.GetMaskedCert(cert)
+		}
+	}
+	return certs
+}
 
 // GetCerts
 // @Title GetCerts
@@ -39,13 +57,13 @@ func (c *ApiController) GetCerts() {
 	sortOrder := c.Ctx.Input.Query("sortOrder")
 
 	if limit == "" || page == "" {
-		certs, err := object.GetMaskedCerts(object.GetCerts(owner))
+		certs, err := object.GetCerts(owner)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
-		c.ResponseOk(certs)
+		c.ResponseOk(c.getMaskedCerts(certs))
 	} else {
 		limit := util.ParseInt(limit)
 		count, err := object.GetCertCount(owner, field, value)
@@ -55,13 +73,13 @@ func (c *ApiController) GetCerts() {
 		}
 
 		paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
-		certs, err := object.GetMaskedCerts(object.GetPaginationCerts(owner, paginator.Offset(), limit, field, value, sortField, sortOrder))
+		certs, err := object.GetPaginationCerts(owner, paginator.Offset(), limit, field, value, sortField, sortOrder)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
-		c.ResponseOk(certs, paginator.Nums())
+		c.ResponseOk(c.getMaskedCerts(certs), paginator.Nums())
 	}
 }
 
@@ -72,6 +90,10 @@ func (c *ApiController) GetCerts() {
 // @Success 200 {array} object.Cert The Response object
 // @router /get-global-certs [get]
 func (c *ApiController) GetGlobalCerts() {
+	if !c.RequireGlobalAdmin() {
+		return
+	}
+
 	limit := c.Ctx.Input.Query("pageSize")
 	page := c.Ctx.Input.Query("p")
 	field := c.Ctx.Input.Query("field")
@@ -80,13 +102,13 @@ func (c *ApiController) GetGlobalCerts() {
 	sortOrder := c.Ctx.Input.Query("sortOrder")
 
 	if limit == "" || page == "" {
-		certs, err := object.GetMaskedCerts(object.GetGlobalCerts())
+		certs, err := object.GetGlobalCerts()
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
-		c.ResponseOk(certs)
+		c.ResponseOk(c.getMaskedCerts(certs))
 	} else {
 		limit := util.ParseInt(limit)
 		count, err := object.GetGlobalCertsCount(field, value)
@@ -96,13 +118,13 @@ func (c *ApiController) GetGlobalCerts() {
 		}
 
 		paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
-		certs, err := object.GetMaskedCerts(object.GetPaginationGlobalCerts(paginator.Offset(), limit, field, value, sortField, sortOrder))
+		certs, err := object.GetPaginationGlobalCerts(paginator.Offset(), limit, field, value, sortField, sortOrder)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
-		c.ResponseOk(certs, paginator.Nums())
+		c.ResponseOk(c.getMaskedCerts(certs), paginator.Nums())
 	}
 }
 
@@ -121,7 +143,11 @@ func (c *ApiController) GetCert() {
 		return
 	}
 
-	c.ResponseOk(object.GetMaskedCert(cert))
+	if cert != nil {
+		cert = c.getMaskedCerts([]*object.Cert{cert})[0]
+	}
+
+	c.ResponseOk(cert)
 }
 
 // UpdateCert
@@ -142,7 +168,22 @@ func (c *ApiController) UpdateCert() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateCert(id, &cert))
+	if err = object.CheckCertName(&cert, id, c.GetAcceptLanguage()); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if err = object.CheckCertEdition(&cert); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if err = c.checkHsmCertChange(&cert, id); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdateCert(id, &cert))
 	c.ServeJSON()
 }
 
@@ -161,7 +202,22 @@ func (c *ApiController) AddCert() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddCert(&cert))
+	if err = object.CheckCertName(&cert, "", c.GetAcceptLanguage()); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if err = object.CheckCertEdition(&cert); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if err = c.checkHsmCertChange(&cert, ""); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddCert(&cert))
 	c.ServeJSON()
 }
 
@@ -180,6 +236,74 @@ func (c *ApiController) DeleteCert() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteCert(&cert))
+	c.Data["json"] = WrapActionResponse(object.DeleteCert(&cert))
 	c.ServeJSON()
+}
+
+// UpdateCertDomainExpire
+// @Title UpdateCertDomainExpire
+// @Tag Cert API
+// @Description update cert domain expire time
+// @Param   id     query   string  true        "The ID of the cert"
+// @Success 200 {object} controllers.Response The Response object
+// @router /update-cert-domain-expire [post]
+func (c *ApiController) UpdateCertDomainExpire() {
+	if _, ok := c.RequireSignedIn(); !ok {
+		return
+	}
+
+	id := c.Ctx.Input.Query("id")
+	cert, err := object.GetCert(id)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if cert == nil {
+		c.ResponseError(c.T("general:The object does not exist"))
+		return
+	}
+
+	domainExpireTime, err := object.GetDomainExpireTime(cert.Name)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if domainExpireTime == "" {
+		c.ResponseError("Failed to determine domain expiration time for domain " + cert.Name +
+			". Please verify that the domain is valid, publicly resolvable, and has a retrievable expiration date, " +
+			"or update the domain expiration time manually.")
+		return
+	}
+	cert.DomainExpireTime = domainExpireTime
+
+	c.Data["json"] = WrapActionResponse(object.UpdateCert(id, cert))
+	c.ServeJSON()
+}
+
+// RotateCert
+// @Title RotateCert
+// @Tag Cert API
+// @Description generate a new key pair for a JWT signing cert, the previous public key stays in the JWKS for the tokens it signed
+// @Param   id     query    string  true        "The id ( owner/name ) of the cert"
+// @Success 200 {object} controllers.Response The Response object
+// @router /rotate-cert [post]
+func (c *ApiController) RotateCert() {
+	id := c.Ctx.Input.Query("id")
+	cert, err := object.GetCert(id)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if cert == nil {
+		c.ResponseError("the cert does not exist: " + id)
+		return
+	}
+
+	err = ee.RotateCert(cert)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	c.ResponseOk(cert.KeyId)
 }

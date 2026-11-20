@@ -15,14 +15,18 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/beego/beego/v2/core/utils/pagination"
 	"github.com/casdoor/casdoor/conf"
+	"github.com/casdoor/casdoor/ee"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
+	"github.com/xorm-io/builder"
 )
 
 // GetGlobalUsers
@@ -32,6 +36,10 @@ import (
 // @Success 200 {array} object.User The Response object
 // @router /get-global-users [get]
 func (c *ApiController) GetGlobalUsers() {
+	if !c.RequireGlobalAdmin() {
+		return
+	}
+
 	limit := c.Ctx.Input.Query("pageSize")
 	page := c.Ctx.Input.Query("p")
 	field := c.Ctx.Input.Query("field")
@@ -46,6 +54,7 @@ func (c *ApiController) GetGlobalUsers() {
 			return
 		}
 
+		c.maskPersonalInfo(users...)
 		c.ResponseOk(users)
 	} else {
 		limit := util.ParseInt(limit)
@@ -68,6 +77,7 @@ func (c *ApiController) GetGlobalUsers() {
 			return
 		}
 
+		c.maskPersonalInfo(users...)
 		c.ResponseOk(users, paginator.Nums())
 	}
 }
@@ -80,6 +90,11 @@ func (c *ApiController) GetGlobalUsers() {
 // @Success 200 {array} object.User The Response object
 // @router /get-users [get]
 func (c *ApiController) GetUsers() {
+	if scope := c.getDelegatedScope(); scope != nil {
+		c.getDelegatedUsers(scope)
+		return
+	}
+
 	owner := c.Ctx.Input.Query("owner")
 	groupName := c.Ctx.Input.Query("groupName")
 	limit := c.Ctx.Input.Query("pageSize")
@@ -96,6 +111,7 @@ func (c *ApiController) GetUsers() {
 				c.ResponseError(err.Error())
 				return
 			}
+			c.maskPersonalInfo(users...)
 			c.ResponseOk(users)
 			return
 		}
@@ -106,6 +122,7 @@ func (c *ApiController) GetUsers() {
 			return
 		}
 
+		c.maskPersonalInfo(users...)
 		c.ResponseOk(users)
 	} else {
 		limit := util.ParseInt(limit)
@@ -128,6 +145,7 @@ func (c *ApiController) GetUsers() {
 			return
 		}
 
+		c.maskPersonalInfo(users...)
 		c.ResponseOk(users, paginator.Nums())
 	}
 }
@@ -177,7 +195,11 @@ func (c *ApiController) GetUser() {
 		}
 	} else {
 		if owner == "" {
-			owner = util.GetOwnerFromId(id)
+			owner, _, err = util.GetOwnerAndNameFromIdWithError(id)
+			if err != nil {
+				c.ResponseError(err.Error())
+				return
+			}
 		}
 
 		switch {
@@ -197,6 +219,7 @@ func (c *ApiController) GetUser() {
 		return
 	}
 
+	isDelegatedAdmin := c.getDelegatedScope().CanManageUser(user)
 	var organization *object.Organization
 	if user != nil {
 		organization, err = object.GetOrganizationByUser(user)
@@ -209,10 +232,10 @@ func (c *ApiController) GetUser() {
 			return
 		}
 
-		if !organization.IsProfilePublic {
+		if !organization.IsProfilePublic && !isDelegatedAdmin {
 			requestUserId := c.GetSessionUsername()
 			var hasPermission bool
-			hasPermission, err = object.CheckUserPermission(requestUserId, user.GetId(), false, c.GetAcceptLanguage())
+			hasPermission, err = object.CheckUserPermission(requestUserId, user.GetId(), true, c.GetAcceptLanguage())
 			if !hasPermission {
 				c.ResponseError(err.Error())
 				return
@@ -230,7 +253,8 @@ func (c *ApiController) GetUser() {
 		return
 	}
 
-	isAdminOrSelf := c.IsAdminOrSelf(user)
+	isAdmin := c.IsAdminOf(user) || isDelegatedAdmin
+	isAdminOrSelf := c.IsAdminOrSelf(user) || isDelegatedAdmin
 	user, err = object.GetMaskedUser(user, isAdminOrSelf)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -238,13 +262,14 @@ func (c *ApiController) GetUser() {
 	}
 
 	if organization != nil && user != nil {
-		user, err = object.GetFilteredUser(user, c.IsAdmin(), c.IsAdminOrSelf(user), organization.AccountItems)
+		user, err = object.GetFilteredUser(user, isAdmin, isAdminOrSelf, organization.AccountItems)
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 	}
 
+	c.maskPersonalInfo(user)
 	c.ResponseOk(user)
 }
 
@@ -291,6 +316,11 @@ func (c *ApiController) UpdateUser() {
 			return
 		}
 
+		if !c.IsAdminOrSelf(userFromUserId) {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
+
 		id = util.GetId(userFromUserId.Owner, userFromUserId.Name)
 	}
 
@@ -310,7 +340,41 @@ func (c *ApiController) UpdateUser() {
 		return
 	}
 
+	if columnsStr != "" {
+		mergedUser := *oldUser
+		if err = json.Unmarshal(c.Ctx.Input.RequestBody, &mergedUser); err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		user = mergedUser
+	}
+
+	// a console form showing the masked phone, email and ID card sends them back unchanged
+	ee.RestoreMaskedPersonalInfo(&user, oldUser)
+
+	isDelegatedAdmin := false
+	if scope := c.getDelegatedScope(); scope != nil {
+		if c.isSessionUser(oldUser) {
+			// a delegated admin changes their own account like any user, the body must describe that account
+			if user.Owner != oldUser.Owner || user.Name != oldUser.Name {
+				c.ResponseError(c.T("auth:Unauthorized operation"))
+				return
+			}
+		} else {
+			if err = c.checkDelegatedUserUpdate(scope, oldUser, &user, columnsStr); err != nil {
+				c.ResponseError(err.Error())
+				return
+			}
+			isDelegatedAdmin = true
+		}
+	}
+
 	if oldUser.Owner == "built-in" && oldUser.Name == "admin" && (user.Owner != "built-in" || user.Name != "admin") {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return
+	}
+
+	if !c.IsGlobalAdmin() && user.Owner != oldUser.Owner {
 		c.ResponseError(c.T("auth:Unauthorized operation"))
 		return
 	}
@@ -325,6 +389,11 @@ func (c *ApiController) UpdateUser() {
 		return
 	}
 
+	if err = ee.CheckUserSod(oldUser, &user, c.GetAcceptLanguage()); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
 	if msg := object.CheckUpdateUser(oldUser, &user, c.GetAcceptLanguage()); msg != "" {
 		c.ResponseError(msg)
 		return
@@ -335,7 +404,7 @@ func (c *ApiController) UpdateUser() {
 		user.Name = strings.ToLower(user.Name)
 	}
 
-	isAdmin := c.IsAdmin()
+	isAdmin := c.IsAdmin() || isDelegatedAdmin
 	allowDisplayNameEmpty := c.Ctx.Input.Query("allowEmpty") != ""
 	if pass, err := object.CheckPermissionForUpdateUser(oldUser, &user, isAdmin, allowDisplayNameEmpty, c.GetAcceptLanguage()); !pass {
 		c.ResponseError(err)
@@ -344,13 +413,94 @@ func (c *ApiController) UpdateUser() {
 
 	columns := []string{}
 	if columnsStr != "" {
-		columns = strings.Split(columnsStr, ",")
+		for _, col := range strings.Split(columnsStr, ",") {
+			columns = append(columns, util.CamelToSnakeCase(col))
+		}
+		if !isAdmin {
+			columns = object.FilterUserSelfColumns(columns)
+			if len(columns) == 0 {
+				c.ResponseError(c.T("auth:Unauthorized operation"))
+				return
+			}
+		}
 	}
 
-	affected, err := object.UpdateUser(id, &user, columns, isAdmin)
+	isPasswordChanged := false
+	// a password_type column means the caller writes an already hashed password as it is
+	if user.Password != "" && user.Password != "***" && user.Password != oldUser.Password && !util.InSlice(columns, "password_type") {
+		if (!isAdmin && oldUser.Tag != "guest-user") || oldUser.Ldap != "" {
+			c.ResponseError(c.T("user:Please use the set-password API to change the password"))
+			return
+		}
+
+		if strings.Contains(user.Password, " ") {
+			c.ResponseError(c.T("user:New password cannot contain blank space."))
+			return
+		}
+
+		organization, err := object.GetOrganizationByUser(oldUser)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if organization == nil {
+			c.ResponseError(fmt.Sprintf(c.T("auth:the organization: %s is not found"), oldUser.Owner))
+			return
+		}
+
+		if msg := object.CheckPasswordComplexityByOrg(organization, user.Password, c.GetAcceptLanguage(), user.Name); msg != "" {
+			c.ResponseError(msg)
+			return
+		}
+
+		msg, err := object.CheckPasswordReuse(oldUser, user.Password, organization, c.GetAcceptLanguage())
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if msg != "" {
+			c.ResponseError(msg)
+			return
+		}
+
+		err = oldUser.AddPasswordHistory(organization)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		user.UpdateUserPassword(organization)
+		user.LastChangePasswordTime = util.GetCurrentTime()
+		user.NeedUpdatePassword = isAdmin && user.NeedUpdatePassword && (util.InSlice(columns, "need_update_password") || !oldUser.NeedUpdatePassword)
+		if len(columns) == 0 {
+			columns = object.GetDefaultUserUpdateColumns(isAdmin)
+		}
+		columns = append(columns, "password", "password_salt", "password_type", "last_change_password_time", "need_update_password")
+		isPasswordChanged = true
+	}
+
+	// a delegated admin writes the admin columns but, unlike an admin, can't list the accounts merged into the user
+	if isDelegatedAdmin && len(columns) == 0 {
+		columns = object.GetDefaultUserUpdateColumns(true)
+	}
+	affected, err := object.UpdateUser(id, &user, columns, isAdmin && !isDelegatedAdmin)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
+	}
+
+	if affected && isPasswordChanged && oldUser.Tag != "guest-user" {
+		_, err = object.ExpireTokenByUser(oldUser.Owner, oldUser.Name)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+
+		err = object.DeleteOtherUserSessions(oldUser.Owner, oldUser.Name, c.getKeptSessionId(oldUser))
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
 	}
 
 	if affected {
@@ -361,7 +511,7 @@ func (c *ApiController) UpdateUser() {
 		}
 	}
 
-	c.Data["json"] = wrapActionResponse(affected)
+	c.Data["json"] = WrapActionResponse(affected)
 	c.ServeJSON()
 }
 
@@ -385,6 +535,13 @@ func (c *ApiController) AddUser() {
 		return
 	}
 
+	if scope := c.getDelegatedScope(); scope != nil {
+		if err = c.checkDelegatedUserAdd(scope, &user); err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
 	emptyUser := object.User{}
 	msg := object.CheckUpdateUser(&emptyUser, &user, c.GetAcceptLanguage())
 	if msg != "" {
@@ -397,13 +554,13 @@ func (c *ApiController) AddUser() {
 		user.RegisterType = "Add User"
 	}
 	if user.RegisterSource == "" {
-		currentUser := c.getCurrentUser()
+		currentUser := c.GetCurrentUser()
 		if currentUser != nil {
 			user.RegisterSource = currentUser.GetId()
 		}
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddUser(&user, c.GetAcceptLanguage()))
+	c.Data["json"] = WrapActionResponse(object.AddUser(&user, c.GetAcceptLanguage()))
 	c.ServeJSON()
 }
 
@@ -427,7 +584,20 @@ func (c *ApiController) DeleteUser() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteUser(&user))
+	if scope := c.getDelegatedScope(); scope != nil {
+		storedUser, err := object.GetUser(util.GetId(user.Owner, user.Name))
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if !scope.CanManageUser(storedUser) {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
+		user = *storedUser
+	}
+
+	c.Data["json"] = WrapActionResponse(object.DeleteUser(&user))
 	c.ServeJSON()
 }
 
@@ -460,16 +630,29 @@ func (c *ApiController) GetEmailAndPhone() {
 		return
 	}
 
+	err = object.CheckLdapPasswordForget(user)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
 	respUser := object.User{Name: user.Name}
 	var contentType string
-	switch username {
-	case user.Email:
+	// object.GetUserByFields() looks the user up after trimming the input, lowering
+	// the email and converting an E.164 phone to its national number, so the same
+	// normalization is needed here. Otherwise an input like "Abc@abc.com" finds the
+	// user but matches none of the cases below, and the response carries neither a
+	// content type nor a destination to send the verification code to.
+	username = strings.TrimSpace(username)
+	nationalPhone, _ := util.ParseE164Phone(username)
+	switch {
+	case user.Email != "" && strings.EqualFold(username, user.Email):
 		contentType = "email"
 		respUser.Email = user.Email
-	case user.Phone:
+	case user.Phone != "" && nationalPhone == user.Phone:
 		contentType = "phone"
 		respUser.Phone = user.Phone
-	case user.Name:
+	case strings.EqualFold(username, user.Name):
 		contentType = "username"
 		respUser.Email = util.GetMaskedEmail(user.Email)
 		respUser.Phone = util.GetMaskedPhone(user.Phone)
@@ -547,15 +730,19 @@ func (c *ApiController) SetPassword() {
 		return
 	}
 
+	scope := c.getDelegatedScope()
+	isDelegatedAdmin := code == "" && scope.CanManageUser(user) && scope.Can(ee.DelegatedActionPasswords)
 	requestUserId := c.GetSessionUsername()
 	if requestUserId == "" && code == "" {
 		c.ResponseError(c.T("general:Please login first"), "Please login first")
 		return
 	} else if code == "" {
-		hasPermission, err := object.CheckUserPermission(requestUserId, userId, true, c.GetAcceptLanguage())
-		if !hasPermission {
-			c.ResponseError(err.Error())
-			return
+		if !isDelegatedAdmin {
+			hasPermission, err := object.CheckUserPermission(requestUserId, userId, true, c.GetAcceptLanguage())
+			if !hasPermission {
+				c.ResponseError(err.Error())
+				return
+			}
 		}
 	} else {
 		if code != c.GetSession("verifiedCode") {
@@ -566,8 +753,6 @@ func (c *ApiController) SetPassword() {
 			c.ResponseError(c.T("general:Wrong userId"))
 			return
 		}
-		c.SetSession("verifiedCode", "")
-		c.SetSession("verifiedUserId", "")
 	}
 
 	targetUser, err := object.GetUser(userId)
@@ -580,9 +765,18 @@ func (c *ApiController) SetPassword() {
 		return
 	}
 
-	isAdmin := c.IsAdmin()
+	// code != "" means the request comes from the forgot-password flow
+	if code != "" {
+		err = object.CheckLdapPasswordForget(targetUser)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	isAdmin := c.IsAdmin() || isDelegatedAdmin
 	if isAdmin {
-		if oldPassword != "" {
+		if oldPassword != "" && requestUserId == userId {
 			err = object.CheckPassword(targetUser, oldPassword, c.GetAcceptLanguage())
 			if err != nil {
 				c.ResponseError(err.Error())
@@ -609,9 +803,13 @@ func (c *ApiController) SetPassword() {
 		return
 	}
 
-	// Check if the new password is the same as the current password
-	if !object.CheckPasswordNotSameAsCurrent(targetUser, newPassword, organization) {
-		c.ResponseError(c.T("user:The new password must be different from your current password"))
+	msg, err = object.CheckPasswordReuse(targetUser, newPassword, organization, c.GetAcceptLanguage())
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if msg != "" {
+		c.ResponseError(msg)
 		return
 	}
 
@@ -630,6 +828,19 @@ func (c *ApiController) SetPassword() {
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
+	}
+
+	if code != "" {
+		c.SetSession("verifiedCode", "")
+		c.SetSession("verifiedUserId", "")
+	}
+
+	if user.Ldap == "" {
+		err = targetUser.AddPasswordHistory(organization)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
 	}
 
 	targetUser.Password = newPassword
@@ -652,11 +863,86 @@ func (c *ApiController) SetPassword() {
 		return
 	}
 
+	_, err = object.ExpireTokenByUser(targetUser.Owner, targetUser.Name)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	err = object.DeleteOtherUserSessions(targetUser.Owner, targetUser.Name, c.getKeptSessionId(targetUser))
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.ResponseOk()
+}
+
+// getKeptSessionId returns the current session id when users change their own password, so that
+// only that session survives the change, an admin changing someone else's password ends all of them
+func (c *ApiController) getKeptSessionId(user *object.User) string {
+	if c.GetSessionUsername() != user.GetId() {
+		return ""
+	}
+
+	return c.Ctx.Input.CruSession.SessionID(context.Background())
+}
+
+// GetInitAdminStatus
+// @Title GetInitAdminStatus
+// @Tag Account API
+// @Description whether built-in/admin is waiting for its first password on the welcome page
+// @Success 200 {object} controllers.Response The Response object
+// @router /get-init-admin-status [get]
+func (c *ApiController) GetInitAdminStatus() {
+	isPending, err := object.IsInitAdminPending()
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	c.ResponseOk(isPending)
+}
+
+// InitAdminPassword
+// @Title InitAdminPassword
+// @Tag Account API
+// @Description set the first password of built-in/admin on the welcome page
+// @Param   password     formData    string  true        "The password"
+// @Success 200 {object} controllers.Response The Response object
+// @router /init-admin-password [post]
+func (c *ApiController) InitAdminPassword() {
+	password := c.Ctx.Request.Form.Get("password")
+
+	organization, err := object.GetOrganization(util.GetId("admin", "built-in"))
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if organization != nil && organization.PasswordObfuscatorType != "" && organization.PasswordObfuscatorType != "Plain" {
+		deobfuscatedPassword, deobfuscateErr := util.GetUnobfuscatedPassword(organization.PasswordObfuscatorType, organization.PasswordObfuscatorKey, password)
+		if deobfuscateErr == nil {
+			password = deobfuscatedPassword
+		}
+	}
+
+	isSet, err := object.SetInitAdminPassword(password, c.GetAcceptLanguage())
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if !isSet {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return
+	}
+
 	c.ResponseOk()
 }
 
 // CheckUserPassword
 // @Title CheckUserPassword
+// @Description Check if user password is correct
+// @Param   body body object.User true "User object with password to check"
 // @router /check-user-password [post]
 // @Tag User API
 // @Success 200 {object} object.Userinfo The Response object
@@ -694,12 +980,23 @@ func (c *ApiController) GetSortedUsers() {
 	sorter := c.Ctx.Input.Query("sorter")
 	limit := util.ParseInt(c.Ctx.Input.Query("limit"))
 
-	users, err := object.GetMaskedUsers(object.GetSortedUsers(owner, sorter, limit))
+	var users []*object.User
+	var err error
+	if scope := c.getDelegatedScope(); scope != nil {
+		if !util.FilterSQLIdentifier(sorter) {
+			c.ResponseError(fmt.Sprintf("invalid sorter field: %s", sorter))
+			return
+		}
+		users, err = object.GetMaskedUsers(scope.GetScopedUsers(0, limit, "", "", sorter, "descend", ""))
+	} else {
+		users, err = object.GetMaskedUsers(object.GetSortedUsers(owner, sorter, limit))
+	}
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
 	}
 
+	c.maskPersonalInfo(users...)
 	c.ResponseOk(users)
 }
 
@@ -717,7 +1014,13 @@ func (c *ApiController) GetUserCount() {
 
 	var count int64
 	var err error
-	if isOnline == "" {
+	if scope := c.getDelegatedScope(); scope != nil {
+		var cond builder.Cond
+		if isOnline != "" {
+			cond = builder.Eq{"is_online": util.ParseInt(isOnline)}
+		}
+		count, err = scope.GetScopedUserCount("", "", "", cond)
+	} else if isOnline == "" {
 		count, err = object.GetUserCount(owner, "", "", "")
 	} else {
 		count, err = object.GetOnlineUserCount(owner, util.ParseInt(isOnline))
@@ -730,29 +1033,6 @@ func (c *ApiController) GetUserCount() {
 	c.ResponseOk(count)
 }
 
-// AddUserKeys
-// @Title AddUserKeys
-// @router /add-user-keys [post]
-// @Tag User API
-// @Success 200 {object} object.Userinfo The Response object
-func (c *ApiController) AddUserKeys() {
-	var user object.User
-	err := json.Unmarshal(c.Ctx.Input.RequestBody, &user)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
-
-	isAdmin := c.IsAdmin()
-	affected, err := object.AddUserKeys(&user, isAdmin)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
-
-	c.ResponseOk(affected)
-}
-
 func (c *ApiController) RemoveUserFromGroup() {
 	owner := c.Ctx.Request.Form.Get("owner")
 	name := c.Ctx.Request.Form.Get("name")
@@ -760,10 +1040,30 @@ func (c *ApiController) RemoveUserFromGroup() {
 
 	organization, err := object.GetOrganization(util.GetId("admin", owner))
 	if err != nil {
+		c.ResponseError(err.Error())
 		return
 	}
-	item := object.GetAccountItemByName("Groups", organization)
-	res, msg := object.CheckAccountItemModifyRule(item, c.IsAdmin(), c.GetAcceptLanguage())
+	if organization == nil {
+		c.ResponseError(fmt.Sprintf(c.T("auth:The organization: %s does not exist"), owner))
+		return
+	}
+	isDelegatedAdmin := false
+	if scope := c.getDelegatedScope(); scope != nil {
+		user, err := object.GetUser(util.GetId(owner, name))
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		groupId := util.GetId(owner, groupName)
+		if !scope.CanManageUser(user) || !scope.HasGroup(groupId) || !scope.CheckGroupChange(user.Groups, util.DeleteVal(append([]string{}, user.Groups...), groupId)) {
+			c.ResponseError(c.T("enterprise:A delegated admin can only put users in the groups they administer"))
+			return
+		}
+		isDelegatedAdmin = true
+	}
+
+	item := object.GetAccountItemForUpdate("Groups", organization)
+	res, msg := object.CheckAccountItemModifyRule(item, c.IsAdmin() || isDelegatedAdmin, c.GetAcceptLanguage())
 	if !res {
 		c.ResponseError(msg)
 		return
@@ -791,17 +1091,13 @@ func (c *ApiController) ImpersonateUser() {
 		return
 	}
 
-	username := c.Ctx.Request.Form.Get("username")
-	if username == "" {
+	owner := c.Ctx.Request.Form.Get("owner")
+	name := c.Ctx.Request.Form.Get("name")
+	if owner == "" || name == "" {
 		c.ResponseError(c.T("general:Missing parameter"))
 		return
 	}
-
-	owner, _, err := util.GetOwnerAndNameFromIdWithError(username)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
-	}
+	username := util.GetId(owner, name)
 
 	if !(owner == org || org == "") {
 		c.ResponseError(c.T("auth:Unauthorized operation"))
@@ -824,7 +1120,7 @@ func (c *ApiController) ImpersonateUser() {
 		c.ResponseError(err.Error())
 		return
 	}
-	c.Ctx.SetCookie("impersonateUser", username, 0, "/")
+	c.Ctx.SetCookie("impersonateUser", url.QueryEscape(username), 0, "/")
 	c.ResponseOk()
 }
 
@@ -950,18 +1246,41 @@ func (c *ApiController) VerifyIdentification() {
 			c.ResponseError(c.T("provider:Provider is not an ID Verification provider"))
 			return
 		}
+
+		if !isProviderVisibleToUser(provider, user) {
+			c.ResponseError(c.T("auth:Unauthorized operation"))
+			return
+		}
 	}
 
-	idvProvider := object.GetIdvProviderFromProvider(provider)
-	if idvProvider == nil {
-		c.ResponseError(c.T("provider:Failed to initialize ID Verification provider"))
-		return
-	}
+	var verified bool
+	if provider.Type == object.ProviderTypePlugin {
+		pluginProvider, err := ee.GetPluginIdvProvider(provider, user.Phone)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		verified, err = pluginProvider.VerifyIdentity(user.IdCardType, user.IdCard, user.RealName)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if !verified && pluginProvider.GetReason() != "" {
+			c.ResponseError(c.T("user:Identity verification failed") + ": " + pluginProvider.GetReason())
+			return
+		}
+	} else {
+		idvProvider := object.GetIdvProviderFromProvider(provider)
+		if idvProvider == nil {
+			c.ResponseError(c.T("provider:Failed to initialize ID Verification provider"))
+			return
+		}
 
-	verified, err := idvProvider.VerifyIdentity(user.IdCardType, user.IdCard, user.RealName)
-	if err != nil {
-		c.ResponseError(err.Error())
-		return
+		verified, err = idvProvider.VerifyIdentity(user.IdCardType, user.IdCard, user.RealName)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
 	}
 
 	if !verified {

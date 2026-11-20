@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/casdoor/casdoor/conf"
+	"github.com/casdoor/casdoor/ee"
 	"github.com/casdoor/casdoor/object"
 	ldap "github.com/casdoor/ldapserver"
 	"github.com/lor00x/goldap/message"
@@ -35,8 +36,8 @@ func StartLdapServer() {
 	serverSsl := ldap.NewServer()
 	routes := ldap.NewRouteMux()
 
-	routes.Bind(handleBind)
-	routes.Search(handleSearch).Label(" SEARCH****")
+	routes.Bind(withRecover(handleBind, func() message.ProtocolOp { return ldap.NewBindResponse(ldap.LDAPResultOperationsError) }))
+	routes.Search(withRecover(handleSearch, func() message.ProtocolOp { return ldap.NewSearchResultDoneResponse(ldap.LDAPResultOperationsError) })).Label(" SEARCH****")
 
 	server.Handle(routes)
 	serverSsl.Handle(routes)
@@ -73,15 +74,27 @@ func StartLdapServer() {
 	}()
 }
 
+func withRecover(handler ldap.HandlerFunc, newErrorResponse func() message.ProtocolOp) ldap.HandlerFunc {
+	return func(w ldap.ResponseWriter, m *ldap.Message) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("LDAP request failed, panic: %v", r)
+				w.Write(newErrorResponse())
+			}
+		}()
+		handler(w, m)
+	}
+}
+
 func getTLSconfig(ldapsCertId string) (*tls.Config, error) {
-	rawCert, err := object.GetCert(ldapsCertId)
+	rawCert, err := object.GetCertEx(ldapsCertId)
 	if err != nil {
 		return nil, err
 	}
 	if rawCert == nil {
 		return nil, fmt.Errorf("cert is empty")
 	}
-	cert, err := tls.X509KeyPair([]byte(rawCert.Certificate), []byte(rawCert.PrivateKey))
+	cert, err := ee.GetCertTlsCertificate(rawCert)
 	if err != nil {
 		return &tls.Config{}, err
 	}
@@ -118,9 +131,26 @@ func handleBind(w ldap.ResponseWriter, m *ldap.Message) {
 
 		bindUser, err := object.CheckUserPassword(bindOrg, bindUsername, bindPassword, "en", enableCaptcha, isSigninViaLdap, isPasswordWithLdapEnabled)
 		if err != nil {
-			log.Printf("Bind failed User=%s, Pass=%#v, ErrMsg=%s", string(r.Name()), r.Authentication(), err)
+			log.Printf("Bind failed User=%s, ErrMsg=%s", string(r.Name()), err)
 			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
 			res.SetDiagnosticMessage("invalid credentials ErrMsg: " + err.Error())
+			w.Write(res)
+			return
+		}
+
+		if bindUser.IsMfaEnabled() {
+			log.Printf("Bind failed User=%s, ErrMsg=the user has MFA enabled", string(r.Name()))
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage("the user has MFA enabled and cannot bind with a password")
+			w.Write(res)
+			return
+		}
+
+		err = object.CheckPasswordOnlySignin(bindUser, "", "en")
+		if err != nil {
+			log.Printf("Bind failed User=%s, ErrMsg=%s", string(r.Name()), err)
+			res.SetResultCode(ldap.LDAPResultInvalidCredentials)
+			res.SetDiagnosticMessage(err.Error())
 			w.Write(res)
 			return
 		}
@@ -164,14 +194,8 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	var isGroupSearch bool = false
-	filter := r.Filter()
-	if eq, ok := filter.(message.FilterEqualityMatch); ok && strings.EqualFold(string(eq.AttributeDesc()), "objectClass") && strings.EqualFold(string(eq.AssertionValue()), "posixGroup") {
-		isGroupSearch = true
-	}
-
-	if isGroupSearch {
-		groups, code := GetFilteredGroups(m, string(r.BaseObject()), r.FilterString())
+	if isPosixGroupFilter(r.Filter()) {
+		groups, code := GetFilteredGroups(m, string(r.BaseObject()), r.Filter())
 		if code != ldap.LDAPResultSuccess {
 			res.SetResultCode(code)
 			w.Write(res)
@@ -179,14 +203,23 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		}
 
 		for _, group := range groups {
+			users := object.GetGroupUsersWithoutError(group.GetId())
+			memberUids := make([]string, 0, len(users))
+			for _, user := range users {
+				memberUids = append(memberUids, user.Name)
+			}
+
+			attributes := getGroupAttributes(group, memberUids)
+			if !matchGroupFilter(r.Filter(), attributes) {
+				continue
+			}
+
 			dn := fmt.Sprintf("cn=%s,%s", group.Name, string(r.BaseObject()))
 			e := ldap.NewSearchResultEntry(dn)
 			e.AddAttribute("cn", message.AttributeValue(group.Name))
-			gidNumberStr := fmt.Sprintf("%v", hash(group.Name))
-			e.AddAttribute("gidNumber", message.AttributeValue(gidNumberStr))
-			users := object.GetGroupUsersWithoutError(group.GetId())
-			for _, user := range users {
-				e.AddAttribute("memberUid", message.AttributeValue(user.Name))
+			e.AddAttribute("gidNumber", message.AttributeValue(getGidNumber(group)))
+			for _, memberUid := range memberUids {
+				e.AddAttribute("memberUid", message.AttributeValue(memberUid))
 			}
 			e.AddAttribute("objectClass", "posixGroup")
 			w.Write(e)
@@ -203,49 +236,138 @@ func handleSearch(w ldap.ResponseWriter, m *ldap.Message) {
 		return
 	}
 
-	for _, user := range users {
-		dn := fmt.Sprintf("uid=%s,cn=%s,%s", user.Id, user.Name, string(r.BaseObject()))
-		e := ldap.NewSearchResultEntry(dn)
-		uidNumberStr := fmt.Sprintf("%v", hash(user.Name))
-		e.AddAttribute("uidNumber", message.AttributeValue(uidNumberStr))
-		e.AddAttribute("gidNumber", message.AttributeValue(uidNumberStr))
-		e.AddAttribute("homeDirectory", message.AttributeValue("/home/"+user.Name))
-		e.AddAttribute("cn", message.AttributeValue(user.Name))
-		e.AddAttribute("uid", message.AttributeValue(user.Id))
-		e.AddAttribute("mail", message.AttributeValue(user.Email))
-		e.AddAttribute("mobile", message.AttributeValue(user.Phone))
-		e.AddAttribute("sn", message.AttributeValue(user.LastName))
-		e.AddAttribute("givenName", message.AttributeValue(user.FirstName))
-		// Add POSIX attributes for Linux machine login support
-		e.AddAttribute("loginShell", getAttribute("loginShell", user))
-		e.AddAttribute("gecos", getAttribute("gecos", user))
-		// Add SSH public key if available
-		sshKey := getAttribute("sshPublicKey", user)
-		if sshKey != "" {
-			e.AddAttribute("sshPublicKey", sshKey)
-		}
-		// Add objectClass for posixAccount
-		e.AddAttribute("objectClass", "posixAccount")
-		for _, group := range user.Groups {
-			e.AddAttribute(ldapMemberOfAttr, message.AttributeValue(group))
-		}
-		attrs := r.Attributes()
-		for _, attr := range attrs {
-			if string(attr) == "*" {
-				attrs = AdditionalLdapAttributes
-				break
-			}
-		}
-		for _, attr := range attrs {
-			e.AddAttribute(message.AttributeDescription(attr), getAttribute(string(attr), user))
-			if string(attr) == "title" {
-				e.AddAttribute(message.AttributeDescription(attr), getAttribute("title", user))
-			}
-		}
+	orgCache := make(map[string]*object.Organization)
 
+	for _, user := range users {
+		if _, ok := orgCache[user.Owner]; !ok {
+			org, err := object.GetOrganizationByUser(user)
+			if err != nil {
+				log.Printf("handleSearch: failed to get organization for user %s: %v", user.Name, err)
+			}
+			orgCache[user.Owner] = org
+		}
+		org := orgCache[user.Owner]
+
+		e := buildUserSearchEntry(user, string(r.BaseObject()), resolveRequestAttributes(r.Attributes()), org)
 		w.Write(e)
 	}
 	w.Write(res)
+}
+
+// resolveRequestAttributes expands the "*" wildcard to the full list of additional LDAP attributes.
+func resolveRequestAttributes(attrs message.AttributeSelection) []string {
+	result := make([]string, 0, len(attrs))
+	for _, attr := range attrs {
+		if string(attr) == "*" {
+			result = make([]string, 0, len(AdditionalLdapAttributes))
+			for _, a := range AdditionalLdapAttributes {
+				result = append(result, string(a))
+			}
+			return result
+		}
+		result = append(result, string(attr))
+	}
+	return result
+}
+
+// buildUserSearchEntry constructs an LDAP search result entry for the given user,
+// respecting the organization's LdapAttributes filter.
+func buildUserSearchEntry(user *object.User, baseDN string, attrs []string, org *object.Organization) message.SearchResultEntry {
+	dn := fmt.Sprintf("uid=%s,cn=%s,%s", user.Id, user.Name, baseDN)
+	e := ldap.NewSearchResultEntry(dn)
+
+	added := make(map[string]bool)
+	addAttribute := func(name string, value string) {
+		if !IsLdapAttrAllowed(org, name) {
+			return
+		}
+		added[strings.ToLower(name)] = true
+		e.AddAttribute(message.AttributeDescription(name), message.AttributeValue(value))
+	}
+
+	uidNumberStr := getUidNumber(user)
+	addAttribute("uidNumber", uidNumberStr)
+	addAttribute("gidNumber", uidNumberStr)
+	addAttribute("homeDirectory", getHomeDirectory(user))
+	addAttribute("cn", user.Name)
+	addAttribute("uid", user.Id)
+	addAttribute("mail", user.Email)
+	addAttribute("mobile", user.Phone)
+	addAttribute("sn", user.LastName)
+	addAttribute("givenName", user.FirstName)
+	// Add POSIX attributes for Linux machine login support
+	addAttribute("loginShell", string(getAttribute("loginShell", user)))
+	addAttribute("gecos", string(getAttribute("gecos", user)))
+	// Add SSH public key if available
+	if sshKey := string(getAttribute("sshPublicKey", user)); sshKey != "" {
+		addAttribute("sshPublicKey", sshKey)
+	}
+	// Add Samba attributes so the entry also works as an SMB account
+	addAttribute("sambaSID", getSambaSid(user))
+	addAttribute("sambaPrimaryGroupSID", getSambaPrimaryGroupSid(user))
+	addAttribute("sambaAcctFlags", getSambaAcctFlags(user))
+	addAttribute("sambaPwdLastSet", getSambaPwdLastSet(user))
+	addAttribute("sambaDomainName", user.Owner)
+	addAttribute("sambaLMPassword", sambaLmPasswordPlaceholder)
+	addAttribute("sambaPasswordHistory", sambaPasswordHistoryPlaceholder)
+	if ntPassword := getSambaNtPassword(user, org); ntPassword != "" {
+		addAttribute("sambaNTPassword", ntPassword)
+	}
+	objectClasses := make([]message.AttributeValue, 0, len(userObjectClasses))
+	for _, objectClass := range userObjectClasses {
+		objectClasses = append(objectClasses, message.AttributeValue(objectClass))
+	}
+	e.AddAttribute("objectClass", objectClasses...)
+	if IsLdapAttrAllowed(org, ldapMemberOfAttr) {
+		for _, group := range user.Groups {
+			e.AddAttribute(ldapMemberOfAttr, message.AttributeValue(groupToDN(group, baseDN)))
+		}
+	}
+	for _, attr := range attrs {
+		if added[strings.ToLower(attr)] || !IsLdapAttrAllowed(org, attr) {
+			continue
+		}
+		if _, ok := getLdapAttributeRelation(attr); !ok {
+			continue
+		}
+		e.AddAttribute(message.AttributeDescription(attr), getAttribute(attr, user))
+	}
+	return e
+}
+
+// groupToDN converts a Casdoor group id "owner/name" into the group's LDAP
+// entry DN, matching the DN a group search returns (see the posixGroup branch
+// in handleSearch). The Casdoor group id "owner/name" is not a valid LDAP DN,
+// which breaks standard clients that parse memberOf as a DN, so memberOf is
+// always emitted in DN form.
+//
+// The ou is taken from the group's own owner (not the user search base) so the
+// DN stays correct even when a user belongs to a group in another organization.
+// A bare id without an "owner/" prefix falls back to the search base.
+func groupToDN(group, baseDN string) string {
+	i := strings.Index(group, "/")
+	if i < 0 {
+		return fmt.Sprintf("cn=%s,%s", group, baseDN)
+	}
+
+	owner, name := group[:i], group[i+1:]
+	if suffix := dcSuffix(baseDN); suffix != "" {
+		return fmt.Sprintf("cn=%s,ou=%s,%s", name, owner, suffix)
+	}
+	return fmt.Sprintf("cn=%s,ou=%s", name, owner)
+}
+
+// dcSuffix returns the dc components of a DN (e.g. "dc=example,dc=com"),
+// preserving order and dropping any ou=/cn= parts.
+func dcSuffix(baseDN string) string {
+	var dcs []string
+	for _, part := range strings.Split(baseDN, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(strings.ToLower(part), "dc=") {
+			dcs = append(dcs, part)
+		}
+	}
+	return strings.Join(dcs, ",")
 }
 
 func handleRootSearch(w ldap.ResponseWriter, r *message.SearchRequest, res *message.SearchResultDone, m *ldap.Message) {
@@ -281,6 +403,8 @@ func handleRootSearch(w ldap.ResponseWriter, r *message.SearchRequest, res *mess
 		e.AddAttribute("objectClasses", []message.AttributeValue{
 			"( 1.3.6.1.1.1.2.0 NAME 'posixAccount' DESC 'Abstraction of an account with POSIX attributes' SUP top AUXILIARY MUST ( cn $ uid $ uidNumber $ gidNumber $ homeDirectory ) MAY ( userPassword $ loginShell $ gecos $ description ) )",
 			"( 1.3.6.1.1.1.2.2 NAME 'posixGroup' DESC 'Abstraction of a group of accounts' SUP top STRUCTURAL MUST ( cn $ gidNumber ) MAY ( userPassword $ memberUid $ description ) )",
+			"( 1.3.6.1.4.1.7165.2.2.6 NAME 'sambaSamAccount' DESC 'Samba 3.0 Auxiliary SAM Account' SUP top AUXILIARY MUST ( uid $ sambaSID ) MAY ( cn $ sambaLMPassword $ sambaNTPassword $ sambaPwdLastSet $ sambaAcctFlags $ displayName $ sambaPrimaryGroupSID $ sambaDomainName $ sambaPasswordHistory $ description ) )",
+			"( 1.3.6.1.4.1.7165.2.2.8 NAME 'sambaIdmapEntry' DESC 'Mapping from a SID to an ID' SUP top AUXILIARY MUST ( sambaSID ) MAY ( uidNumber $ gidNumber ) )",
 		}...)
 		w.Write(e)
 	}

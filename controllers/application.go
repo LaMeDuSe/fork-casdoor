@@ -17,8 +17,10 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/beego/beego/v2/core/utils/pagination"
+	"github.com/casdoor/casdoor/ee"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 )
@@ -31,6 +33,11 @@ import (
 // @Success 200 {array} object.Application The Response object
 // @router /get-applications [get]
 func (c *ApiController) GetApplications() {
+	if scope := c.getDelegatedScope(); scope != nil {
+		c.getDelegatedApplications(scope)
+		return
+	}
+
 	userId := c.GetSessionUsername()
 	owner := c.Ctx.Input.Query("owner")
 	limit := c.Ctx.Input.Query("pageSize")
@@ -55,14 +62,24 @@ func (c *ApiController) GetApplications() {
 		c.ResponseOk(object.GetMaskedApplications(applications, userId))
 	} else {
 		limit := util.ParseInt(limit)
-		count, err := object.GetApplicationCount(owner, field, value)
+		var count int64
+		if organization == "" {
+			count, err = object.GetApplicationCount(owner, field, value)
+		} else {
+			count, err = object.GetOrganizationApplicationCount(owner, organization, field, value)
+		}
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
 		paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
-		application, err := object.GetPaginationApplications(owner, paginator.Offset(), limit, field, value, sortField, sortOrder)
+		var application []*object.Application
+		if organization == "" {
+			application, err = object.GetPaginationApplications(owner, paginator.Offset(), limit, field, value, sortField, sortOrder)
+		} else {
+			application, err = object.GetPaginationOrganizationApplications(owner, organization, paginator.Offset(), limit, field, value, sortField, sortOrder)
+		}
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
@@ -91,14 +108,14 @@ func (c *ApiController) GetApplication() {
 	}
 
 	if c.Ctx.Input.Query("withKey") != "" && application != nil && application.Cert != "" {
-		cert, err := object.GetCert(util.GetId(application.Owner, application.Cert))
+		cert, err := object.GetCertEx(util.GetId(application.Owner, application.Cert))
 		if err != nil {
 			c.ResponseError(err.Error())
 			return
 		}
 
 		if cert == nil {
-			cert, err = object.GetCert(util.GetId(application.Organization, application.Cert))
+			cert, err = object.GetCertEx(util.GetId(application.Organization, application.Cert))
 			if err != nil {
 				c.ResponseError(err.Error())
 				return
@@ -112,6 +129,11 @@ func (c *ApiController) GetApplication() {
 
 	clientIp := util.GetClientIpFromRequest(c.Ctx.Request)
 	object.CheckEntryIp(clientIp, nil, application, nil, c.GetAcceptLanguage())
+
+	if scope := c.getDelegatedScope(); scope.Can(ee.DelegatedActionApplications) && scope.HasApplication(application) {
+		c.ResponseOk(application)
+		return
+	}
 
 	c.ResponseOk(object.GetMaskedApplication(application, userId))
 }
@@ -145,6 +167,17 @@ func (c *ApiController) GetUserApplication() {
 	if application == nil {
 		c.ResponseError(fmt.Sprintf(c.T("general:The organization: %s should have one application at least"), user.Owner))
 		return
+	}
+
+	if application.Organization != user.Owner {
+		organization, err := object.GetOrganizationByUser(user)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+		if organization != nil {
+			application.OrganizationObj = organization
+		}
 	}
 
 	c.ResponseOk(object.GetMaskedApplication(application, userId))
@@ -224,6 +257,7 @@ func (c *ApiController) GetOrganizationApplications() {
 // @router /update-application [post]
 func (c *ApiController) UpdateApplication() {
 	id := c.Ctx.Input.Query("id")
+	columnsStr := c.Ctx.Input.Query("columns")
 
 	var application object.Application
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &application)
@@ -237,7 +271,31 @@ func (c *ApiController) UpdateApplication() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateApplication(id, &application, c.IsGlobalAdmin(), c.GetAcceptLanguage()))
+	if err = object.CheckApplicationEdition(&application); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if err = ee.ValidateFormFill(application.FormFill, c.GetAcceptLanguage()); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if scope := c.getDelegatedScope(); scope != nil {
+		if err = c.checkDelegatedApplicationUpdate(scope, id, &application); err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	columns := []string{}
+	if columnsStr != "" {
+		for _, col := range strings.Split(columnsStr, ",") {
+			columns = append(columns, util.CamelToSnakeCase(col))
+		}
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdateApplication(id, &application, c.IsGlobalAdmin(), c.GetAcceptLanguage(), columns))
 	c.ServeJSON()
 }
 
@@ -253,6 +311,10 @@ func (c *ApiController) AddApplication() {
 	err := json.Unmarshal(c.Ctx.Input.RequestBody, &application)
 	if err != nil {
 		c.ResponseError(err.Error())
+		return
+	}
+
+	if !c.requireOrganizationPermission(application.Organization) {
 		return
 	}
 
@@ -272,7 +334,45 @@ func (c *ApiController) AddApplication() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddApplication(&application))
+	if err = object.CheckApplicationEdition(&application); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if err = ee.ValidateFormFill(application.FormFill, c.GetAcceptLanguage()); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	if len(application.GrantTypes) == 0 {
+		application.GrantTypes = []string{"authorization_code"}
+	}
+
+	if application.Tags == nil {
+		application.Tags = []string{}
+	}
+
+	if application.RedirectUris == nil {
+		application.RedirectUris = []string{}
+	}
+
+	if application.Providers == nil {
+		application.Providers = []*object.ProviderItem{}
+	}
+
+	if application.Scopes == nil {
+		application.Scopes = []*object.ScopeItem{}
+	}
+
+	if !c.IsGlobalAdmin() {
+		err = object.CheckApplicationCustomHtml(&application, nil)
+		if err != nil {
+			c.ResponseError(err.Error())
+			return
+		}
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddApplication(&application, c.GetAcceptLanguage()))
 	c.ServeJSON()
 }
 
@@ -291,6 +391,6 @@ func (c *ApiController) DeleteApplication() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteApplication(&application))
+	c.Data["json"] = WrapActionResponse(object.DeleteApplication(&application))
 	c.ServeJSON()
 }

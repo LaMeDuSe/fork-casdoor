@@ -20,30 +20,48 @@ import (
 
 	"github.com/beego/beego/v2/core/logs"
 	"github.com/beego/beego/v2/server/web"
-	_ "github.com/beego/beego/v2/server/web/session/redis"
 	"github.com/casdoor/casdoor/authz"
 	"github.com/casdoor/casdoor/conf"
-	"github.com/casdoor/casdoor/controllers"
+	"github.com/casdoor/casdoor/ee"
+	"github.com/casdoor/casdoor/ee/tlsserver"
+	"github.com/casdoor/casdoor/ee/tracing"
 	"github.com/casdoor/casdoor/ldap"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/proxy"
 	"github.com/casdoor/casdoor/radius"
 	"github.com/casdoor/casdoor/routers"
+	"github.com/casdoor/casdoor/service"
+	"github.com/casdoor/casdoor/upgrade"
 	"github.com/casdoor/casdoor/util"
 )
 
 func main() {
+	if util.RunAsService(runServer) {
+		return
+	}
+
+	runServer()
+}
+
+func runServer() {
+	upgrade.CheckPendingUpgrade()
+
 	web.BConfig.WebConfig.Session.SessionOn = true
 	web.BConfig.WebConfig.Session.SessionName = "casdoor_session_id"
-	if conf.GetConfigString("redisEndpoint") == "" {
-		web.BConfig.WebConfig.Session.SessionProvider = "file"
+	if redisConfig := conf.GetRedisConfig(); redisConfig == nil {
+		web.BConfig.WebConfig.Session.SessionProvider = routers.GetLazySessionProvider("file")
 		web.BConfig.WebConfig.Session.SessionProviderConfig = "./tmp"
 	} else {
-		web.BConfig.WebConfig.Session.SessionProvider = "redis"
-		web.BConfig.WebConfig.Session.SessionProviderConfig = conf.GetConfigString("redisEndpoint")
+		provider, providerConfig := redisConfig.GetSessionProvider()
+		web.BConfig.WebConfig.Session.SessionProvider = routers.GetLazySessionProvider(provider)
+		web.BConfig.WebConfig.Session.SessionProviderConfig = providerConfig
 	}
-	web.BConfig.WebConfig.Session.SessionCookieLifeTime = 3600 * 24 * 30
-	web.BConfig.WebConfig.Session.SessionGCMaxLifetime = 3600 * 24 * 30
+	sessionCookieLifeTime := 3600 * 24 * 30
+	if val, err := conf.GetConfigInt64("sessionCookieLifeTime"); err == nil && val > 0 {
+		sessionCookieLifeTime = int(val)
+	}
+	web.BConfig.WebConfig.Session.SessionCookieLifeTime = sessionCookieLifeTime
+	web.BConfig.WebConfig.Session.SessionGCMaxLifetime = int64(sessionCookieLifeTime)
 	// web.BConfig.WebConfig.Session.SessionCookieSameSite = http.SameSiteNoneMode
 
 	routers.InitAPI()
@@ -52,6 +70,7 @@ func main() {
 	object.CreateTables()
 
 	object.InitDb()
+	object.InitSetting()
 
 	// Handle export command
 	if object.ShouldExportData() {
@@ -65,24 +84,47 @@ func main() {
 	}
 
 	object.InitDefaultStorageProvider()
+	object.InitLogProviders()
 	object.InitLdapAutoSynchronizer()
 	proxy.InitHttpClient()
 	authz.InitApi()
 	object.InitUserManager()
 	object.InitFromFile()
-	object.InitCasvisorConfig()
 	object.InitCleanupTokens()
+	object.InitCleanupRecords()
+	object.InitCleanupDeviceAuthMap()
+	object.InitCleanupCasTickets()
+	object.InitSamlAssertionStore()
+	object.InitExpirePermissions()
+	object.InitUpdateSubscriptionStates()
+	ee.InitSecurityPolicyJobs()
+	ee.InitPrivilegedAccessJobs()
+	ee.InitAccessReviewJobs()
+	tracing.Init()
+
+	object.InitSiteMap()
+	if len(object.SiteMap) != 0 {
+		object.InitRuleMap()
+		object.StartMonitorSitesLoop()
+	}
 
 	util.SafeGoroutine(func() { object.RunSyncUsersJob() })
-	util.SafeGoroutine(func() { controllers.InitCLIDownloader() })
 
 	// web.DelStaticPath("/static")
-	// web.SetStaticPath("/static", "web/build/static")
+	// web.SetStaticPath("/assets", "web/build/assets")
 
 	web.BConfig.WebConfig.DirectoryIndex = true
-	web.SetStaticPath("/swagger", "swagger")
+	if web.BConfig.RunMode == "dev" {
+		web.SetStaticPath("/swagger", routers.GetSwaggerFolder())
+	}
 	web.SetStaticPath("/files", "files")
 	// https://studygolang.com/articles/2303
+	web.InsertFilter("*", web.BeforeStatic, routers.TracingFilter)
+	web.InsertFilter("/api/forward-auth", web.BeforeStatic, routers.ForwardAuthFilter)
+	web.InsertFilter("*", web.BeforeStatic, routers.RequestBodyFilter)
+	web.InsertFilter("*", web.BeforeStatic, routers.ContentTypeFilter)
+	web.InsertFilter("*", web.BeforeStatic, routers.UploadedFileFilter)
+	web.InsertFilter("*", web.BeforeRouter, routers.SessionCookieFilter)
 	web.InsertFilter("*", web.BeforeRouter, routers.StaticFilter)
 	web.InsertFilter("*", web.BeforeRouter, routers.AutoSigninFilter)
 	web.InsertFilter("*", web.BeforeRouter, routers.CorsFilter)
@@ -92,6 +134,7 @@ func main() {
 	web.InsertFilter("*", web.BeforeRouter, routers.RecordMessage)
 	web.InsertFilter("*", web.BeforeRouter, routers.FieldValidationFilter)
 	web.InsertFilter("*", web.AfterExec, routers.AfterRecordMessage, web.WithReturnOnOutput(false))
+	web.InsertFilter("*", web.FinishRouter, routers.TracingEndFilter, web.WithReturnOnOutput(false))
 
 	var logAdapter string
 	logConfigMap := make(map[string]interface{})
@@ -126,5 +169,15 @@ func main() {
 	go radius.StartRadiusServer()
 	go object.ClearThroughputPerSecond()
 
-	web.Run(fmt.Sprintf(":%v", port))
+	// Start webhook delivery worker
+	object.StartWebhookDeliveryWorker()
+	ee.StartProvisioningWorker()
+
+	if len(object.SiteMap) != 0 {
+		service.Start()
+	}
+
+	tlsserver.Start(port, routers.RequestPathMiddleware)
+
+	web.RunWithMiddleWares(fmt.Sprintf(":%v", port), routers.RequestPathMiddleware)
 }

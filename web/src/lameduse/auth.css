@@ -1,100 +1,19 @@
 /* ================================================================
-   Lameduse Auth Theme – Login / Signup
+   LaMeDuSe sign-in pages: animated background + glass card
    ================================================================
-   Scoped under .lameduse-auth (see AuthShell.js). Rules target the
-   existing Casdoor markup; the only upstream markup addition is the
-   "login-providers login-providers-<rule>" class in auth/LoginPage.js.
+   Applied by AuthLayout when the page has no background image of its own
+   (".lameduse-auth" on the ".login-background" root, see AuthLayout.tsx).
 
-   Layout goals (decluttering when every option is enabled):
-     - back button / language picker live in the card's top corners
-     - sign-in methods become a segmented control with a sliding pill
-     - "auto sign in" + "forgot password" share one quiet row
-     - providers are equal tiles under a "Continue with" divider
-     - sign-up link becomes a separated footer
+   Specificity: every rule goes through :where(.lameduse-auth), so it weighs
+   the same as the selectors an application's own `formCss` uses, which is
+   injected later and therefore still wins. Colours stay theme tokens, so an
+   organization's colorPrimary and the dark palette keep working.
    ================================================================ */
 
-/* Selectors below target distinct elements; source order is grouped by component, not specificity. */
-/* stylelint-disable no-descending-specificity */
-
-/* ── Tokens ──────────────────────────────────────────────────── */
-.lameduse-auth {
-  --ld-indigo: #1b1464;
-  --ld-blue: #0080e2;
-  --ld-teal: #01b4b6;
-  --ld-text: #16133f;
-  --ld-muted: #6b6f86;
-  --ld-card-bg: rgb(255 255 255 / 74%);
-  --ld-card-border: rgb(255 255 255 / 70%);
-  --ld-card-shadow:
-    0 1px 0 rgb(255 255 255 / 80%) inset,
-    0 30px 80px -20px rgb(27 20 100 / 28%),
-    0 12px 32px -12px rgb(0 60 140 / 18%);
-  --ld-sheen:
-    linear-gradient(
-      140deg,
-      rgb(255 255 255 / 95%),
-      rgb(255 255 255 / 15%) 38%,
-      rgb(0 128 226 / 25%) 70%,
-      rgb(1 180 182 / 45%)
-    );
-  --ld-input-bg: rgb(255 255 255 / 82%);
-  --ld-input-border: rgb(27 20 100 / 12%);
-  --ld-input-hover: rgb(0 128 226 / 55%);
-  --ld-focus-ring: 0 0 0 4px rgb(0 128 226 / 14%);
-  --ld-seg-bg: rgb(27 20 100 / 6%);
-  --ld-seg-pill: #fff;
-  --ld-seg-pill-shadow: 0 1px 2px rgb(27 20 100 / 12%), 0 4px 12px -2px rgb(27 20 100 / 12%);
-  --ld-divider: rgb(27 20 100 / 10%);
-  --ld-tile-bg: rgb(255 255 255 / 85%);
-  --ld-tile-border: rgb(27 20 100 / 10%);
-  --ld-link: #0070c9;
-  --ld-ease: cubic-bezier(0.16, 1, 0.3, 1);
-
-  position: relative;
-  width: 100%;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ld-text);
-}
-
-.lameduse-auth-dark {
-  --ld-text: #ecebff;
-  --ld-muted: #9a9cc0;
-  --ld-card-bg: rgb(14 13 42 / 62%);
-  --ld-card-border: rgb(255 255 255 / 8%);
-  --ld-card-shadow:
-    0 1px 0 rgb(255 255 255 / 6%) inset,
-    0 40px 100px -20px rgb(0 0 0 / 70%),
-    0 0 0 1px rgb(0 0 0 / 20%);
-  --ld-sheen:
-    linear-gradient(
-      140deg,
-      rgb(255 255 255 / 28%),
-      rgb(255 255 255 / 2%) 40%,
-      rgb(0 128 226 / 30%) 72%,
-      rgb(1 180 182 / 55%)
-    );
-  --ld-input-bg: rgb(255 255 255 / 4%);
-  --ld-input-border: rgb(255 255 255 / 10%);
-  --ld-input-hover: rgb(127 212 255 / 50%);
-  --ld-focus-ring: 0 0 0 4px rgb(0 128 226 / 25%);
-  --ld-seg-bg: rgb(255 255 255 / 5%);
-  --ld-seg-pill: rgb(255 255 255 / 11%);
-  --ld-seg-pill-shadow: 0 1px 0 rgb(255 255 255 / 8%) inset, 0 4px 14px -4px rgb(0 0 0 / 60%);
-  --ld-divider: rgb(255 255 255 / 9%);
-  --ld-tile-bg: rgb(255 255 255 / 4%);
-  --ld-tile-border: rgb(255 255 255 / 10%);
-  --ld-link: #6cc4ff;
-}
-
-.lameduse-auth-content {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  min-width: 0;
-  max-width: 100vw;
+/* ── Root: the background sits behind the content inside this stacking context ── */
+:where(.lameduse-auth) {
+  isolation: isolate;
+  background: transparent;
 }
 
 /* ================================================================
@@ -103,7 +22,7 @@
 .ld-bg {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   overflow: hidden;
   pointer-events: none;
 }
@@ -120,7 +39,7 @@
     linear-gradient(180deg, #0b0a2e 0%, #070826 55%, #04101c 100%);
 }
 
-/* Aurora: soft radial blobs; only transforms animate (compositor-friendly, no filter) */
+/* Aurora: soft radial blobs, only transforms animate (no filter, compositor-friendly) */
 .ld-bg-aurora {
   position: absolute;
   inset: -15%;
@@ -206,7 +125,7 @@
   inset: 0;
 }
 
-/* Spotlight: fixed-size glow moved by transform from AuthBackground.js */
+/* Spotlight: fixed-size glow moved by transform from AuthBackground.tsx */
 .ld-bg-spotlight {
   position: absolute;
   left: 0;
@@ -262,38 +181,42 @@
 }
 
 /* ================================================================
-   Card
+   Glass card
    ================================================================ */
-.lameduse-auth .login-content {
-  padding: 0 16px;
-  box-sizing: border-box;
-}
-
-.lameduse-auth .login-panel,
-.lameduse-auth .login-panel-dark {
-  position: relative;
-  max-width: 100%;
-  margin: 48px auto;
-  border-radius: 26px;
-  background: var(--ld-card-bg);
+:where(.lameduse-auth) .login-panel {
+  border-radius: 1.5rem;
+  border-color: hsl(var(--border) / 70%);
+  background: hsl(var(--card) / 74%);
   backdrop-filter: blur(24px) saturate(160%);
-  border: 1px solid var(--ld-card-border);
-  box-shadow: var(--ld-card-shadow);
-  overflow: hidden;
-  animation: ld-card-in 1s var(--ld-ease) both;
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 50%) inset,
+    0 30px 80px -20px rgb(27 20 100 / 28%),
+    0 12px 32px -12px rgb(0 60 140 / 18%);
+  animation: ld-card-in 1s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* Gradient hairline border (masked so only the 1px edge shows) */
-.lameduse-auth .login-panel::before,
-.lameduse-auth .login-panel-dark::before {
+:where(html.dark .lameduse-auth) .login-panel {
+  background: hsl(var(--card) / 62%);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 6%) inset,
+    0 40px 100px -20px rgb(0 0 0 / 70%);
+}
+
+/* Gradient hairline border, masked so only the 1px edge shows */
+:where(.lameduse-auth) .login-panel::before {
   content: "";
   position: absolute;
   inset: 0;
   padding: 1px;
   border-radius: inherit;
-  background: var(--ld-sheen);
-
-  /* autoprefixer adds -webkit-mask / -webkit-mask-composite: xor */
+  background:
+    linear-gradient(
+      140deg,
+      rgb(255 255 255 / 85%),
+      rgb(255 255 255 / 10%) 38%,
+      rgb(0 128 226 / 25%) 70%,
+      rgb(1 180 182 / 45%)
+    );
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
   pointer-events: none;
@@ -301,15 +224,14 @@
 }
 
 /* Thin brand glow along the top edge */
-.lameduse-auth .login-panel::after,
-.lameduse-auth .login-panel-dark::after {
+:where(.lameduse-auth) .login-panel::after {
   content: "";
   position: absolute;
   top: 0;
   left: 18%;
   right: 18%;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--ld-blue), var(--ld-teal), transparent);
+  background: linear-gradient(90deg, transparent, #0080e2, #01b4b6, transparent);
   opacity: 0.7;
   pointer-events: none;
   z-index: 2;
@@ -327,63 +249,28 @@
   }
 }
 
-/* Side panel (formOffset = 4) */
-.lameduse-auth .side-image {
-  background: linear-gradient(150deg, #1b1464 0%, #0080e2 55%, #01b4b6 100%);
-  background-size: 180% 180%;
-  animation: ld-pan 18s ease-in-out infinite alternate;
-  border-right: none !important;
+/* A compact logo leaves the room to the form (upstream allows up to 8rem) */
+:where(.lameduse-auth) .login-logo-box img {
+  max-height: 3.5rem;
 }
 
-.lameduse-auth .side-image > div {
-  position: relative;
-  z-index: 1;
+/* Monochrome brand logos are black: invert them on the dark palette */
+:where(html.dark .lameduse-auth) .login-form img[src*="github" i],
+:where(html.dark .lameduse-auth) .login-form img[src*="apple" i],
+:where(html.dark .lameduse-auth) .login-form img[src*="twitter" i] {
+  filter: invert(1);
 }
 
-@keyframes ld-pan {
-  from { background-position: 0% 0%; }
-  to { background-position: 100% 100%; }
+/* Staggered entrance of the card's content */
+:where(.lameduse-auth) .login-form > * {
+  animation: ld-fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* ── Form column ─────────────────────────────────────────────── */
-.lameduse-auth .login-form {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0; /* let the column shrink below the tabs' natural width (mobile) */
-  padding: 52px 44px 36px;
-  max-width: 440px;
-  margin: 0 auto;
-}
-
-/* Column layout so the sign-up footer can always be placed last */
-.lameduse-auth .login-form form {
-  display: flex;
-  flex-direction: column;
-  max-width: 100%;
-  margin: 0 auto;
-}
-
-.lameduse-auth .ant-form-item {
-  margin-bottom: 14px;
-}
-
-/* Staggered entrance of the form rows */
-.lameduse-auth .login-form form > * {
-  animation: ld-fade-up 0.8s var(--ld-ease) both;
-}
-
-.lameduse-auth .login-form form > *:nth-child(1) { animation-delay: 0.1s; }
-.lameduse-auth .login-form form > *:nth-child(2) { animation-delay: 0.14s; }
-.lameduse-auth .login-form form > *:nth-child(3) { animation-delay: 0.18s; }
-.lameduse-auth .login-form form > *:nth-child(4) { animation-delay: 0.22s; }
-.lameduse-auth .login-form form > *:nth-child(5) { animation-delay: 0.26s; }
-.lameduse-auth .login-form form > *:nth-child(6) { animation-delay: 0.3s; }
-.lameduse-auth .login-form form > *:nth-child(7) { animation-delay: 0.34s; }
-.lameduse-auth .login-form form > *:nth-child(8) { animation-delay: 0.38s; }
-.lameduse-auth .login-form form > *:nth-child(9) { animation-delay: 0.42s; }
-.lameduse-auth .login-form form > *:nth-child(10) { animation-delay: 0.46s; }
-.lameduse-auth .login-form form > *:nth-child(11) { animation-delay: 0.5s; }
-.lameduse-auth .login-form form > *:nth-child(n+12) { animation-delay: 0.54s; }
+:where(.lameduse-auth) .login-form > *:nth-child(1) { animation-delay: 0.12s; }
+:where(.lameduse-auth) .login-form > *:nth-child(2) { animation-delay: 0.18s; }
+:where(.lameduse-auth) .login-form > *:nth-child(3) { animation-delay: 0.24s; }
+:where(.lameduse-auth) .login-form > *:nth-child(4) { animation-delay: 0.3s; }
+:where(.lameduse-auth) .login-form > *:nth-child(n+5) { animation-delay: 0.36s; }
 
 @keyframes ld-fade-up {
   from {
@@ -397,537 +284,49 @@
   }
 }
 
-/* ── Logo ─────────────────────────────────────────────────────── */
-.lameduse-auth .login-logo-box {
-  margin-bottom: 22px;
-}
-
-.lameduse-auth .login-logo-box .panel-logo {
-  width: auto;
-  max-width: 200px;
-  max-height: 56px;
-  margin: 0;
-  object-fit: contain;
-}
-
-/* ── Corner controls: back button (left), language picker (right) ── */
-.lameduse-auth .back-button {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 3;
-}
-
-.lameduse-auth .back-inner-button {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  color: var(--ld-muted);
-  transition: background-color 0.2s ease, color 0.2s ease;
-}
-
-.lameduse-auth .back-inner-button:hover {
-  color: var(--ld-text) !important;
-  background: var(--ld-seg-bg) !important;
-}
-
-.lameduse-auth .login-languages {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 3;
-}
-
-.lameduse-auth .login-languages .select-box {
-  float: none;
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  color: var(--ld-muted);
-  transition: background-color 0.2s ease, color 0.2s ease;
-}
-
-.lameduse-auth .login-languages .select-box:hover {
-  color: var(--ld-text);
-  background: var(--ld-seg-bg);
-}
-
-.lameduse-auth .login-languages .select-box .anticon {
-  font-size: 18px !important;
-}
-
-/* ── Sign-in methods: segmented control with sliding pill ─────── */
-.lameduse-auth .signin-methods {
-  margin-bottom: 18px;
-}
-
-.lameduse-auth .signin-methods > .ant-tabs-nav {
-  margin: 0;
-  padding: 4px;
-  border-radius: 13px;
-  background: var(--ld-seg-bg);
-}
-
-.lameduse-auth .signin-methods > .ant-tabs-nav::before {
-  display: none;
-}
-
-.lameduse-auth .signin-methods .ant-tabs-nav-wrap {
-  justify-content: stretch !important;
-}
-
-.lameduse-auth .signin-methods,
-.lameduse-auth .signin-methods .ant-tabs-nav-wrap,
-.lameduse-auth .signin-methods .ant-tabs-nav-list {
-  min-width: 0;
-}
-
-.lameduse-auth .signin-methods .ant-tabs-nav-list {
-  flex: 1;
-}
-
-.lameduse-auth .signin-methods .ant-tabs-tab {
-  flex: 1 1 auto; /* long labels (e.g. translations) shrink more than short ones */
-  justify-content: center;
-  min-width: 0;
-  overflow: hidden;
-  margin: 0 !important;
-  padding: 7px 6px !important;
-  border-radius: 10px;
-  font-size: 12.5px;
-  z-index: 1;
-  color: var(--ld-muted);
-  transition: color 0.25s ease;
-}
-
-/* Long labels wrap onto two lines, then ellipsis as a last resort */
-.lameduse-auth .signin-methods .ant-tabs-tab-btn {
-  /* stylelint-disable-next-line value-no-vendor-prefix -- required by line-clamp in all browsers */
-  display: -webkit-box;
-  overflow: hidden;
-  white-space: normal;
-  text-align: center;
-  line-height: 1.25;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.lameduse-auth .signin-methods .ant-tabs-tab:hover {
-  color: var(--ld-text);
-}
-
-.lameduse-auth .signin-methods .ant-tabs-tab-active .ant-tabs-tab-btn {
-  color: var(--ld-text) !important;
-  font-weight: 600;
-  text-shadow: none;
-}
-
-/* antd animates the ink bar's left/width: restyled as the pill, it slides for free */
-.lameduse-auth .signin-methods .ant-tabs-ink-bar {
-  top: 0;
-  bottom: 0 !important;
-  height: auto !important;
-  border-radius: 10px;
-  background: var(--ld-seg-pill) !important;
-  box-shadow: var(--ld-seg-pill-shadow);
-  z-index: 0;
-  transition: left 0.45s var(--ld-ease), width 0.45s var(--ld-ease) !important;
-}
-
-.lameduse-auth .signin-methods .ant-tabs-content-holder {
-  display: none;
-}
-
-/* ── Inputs ───────────────────────────────────────────────────── */
-.lameduse-auth .ant-input-affix-wrapper,
-.lameduse-auth .login-form .ant-input:not(.ant-input-affix-wrapper .ant-input),
-.lameduse-auth .ant-select .ant-select-selector {
-  border-radius: 12px !important;
-  background: var(--ld-input-bg) !important;
-  border: 1px solid var(--ld-input-border) !important;
-  transition: border-color 0.2s ease, box-shadow 0.25s ease, background-color 0.2s ease;
-}
-
-.lameduse-auth .ant-input-affix-wrapper {
-  padding: 10px 14px;
-}
-
-.lameduse-auth .ant-input-affix-wrapper > input.ant-input {
-  background: transparent !important;
-}
-
-.lameduse-auth .ant-input-affix-wrapper .ant-input-prefix {
-  margin-inline-end: 10px;
-  color: var(--ld-muted);
-}
-
-.lameduse-auth .ant-input-affix-wrapper:hover,
-.lameduse-auth .login-form .ant-input:hover,
-.lameduse-auth .ant-select:hover .ant-select-selector {
-  border-color: var(--ld-input-hover) !important;
-}
-
-.lameduse-auth .ant-input-affix-wrapper-focused,
-.lameduse-auth .ant-input-affix-wrapper:focus-within,
-.lameduse-auth .login-form .ant-input:focus,
-.lameduse-auth .ant-select-focused .ant-select-selector {
-  border-color: var(--ld-blue) !important;
-  box-shadow: var(--ld-focus-ring) !important;
-}
-
-.lameduse-auth .ant-form-item-label > label {
-  font-weight: 500;
-  color: var(--ld-text);
-}
-
-/* ── Auto sign-in + forgot password: one quiet row ────────────── */
-.lameduse-auth .login-forget-password {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: auto; /* default item CSS sets 320px */
-  margin: 0 2px 20px;
-  font-size: 13px;
-}
-
-.lameduse-auth .login-forget-password .ant-checkbox-wrapper {
-  float: none !important;
-  font-size: 13px;
-  color: var(--ld-muted);
-}
-
-.lameduse-auth .login-forget-password a {
-  margin-left: auto;
-}
-
-.lameduse-auth .ant-checkbox-checked .ant-checkbox-inner {
-  background-color: var(--ld-indigo);
-  border-color: var(--ld-indigo);
-}
-
-.lameduse-auth-dark .ant-checkbox-checked .ant-checkbox-inner {
-  background-color: var(--ld-blue);
-  border-color: var(--ld-blue);
-}
-
-/* ── Links ────────────────────────────────────────────────────── */
-.lameduse-auth .login-forget-password a,
-.lameduse-auth .login-signup-link a,
-.lameduse-auth .signup-link {
-  color: var(--ld-link);
-  font-weight: 500;
-  transition: color 0.2s ease, opacity 0.2s ease;
-}
-
-.lameduse-auth .login-forget-password a:hover,
-.lameduse-auth .login-signup-link a:hover,
-.lameduse-auth .signup-link:hover {
-  opacity: 0.75;
-}
-
-/* ── Primary button ───────────────────────────────────────────── */
-.lameduse-auth .login-button-box {
-  margin-bottom: 4px;
-}
-
-.lameduse-auth .login-button,
-.lameduse-auth .signup-button {
+/* Primary action: a gradient of the theme's own primary colour plus a light sweep on hover */
+:where(.lameduse-auth) .login-form button[type="submit"].w-full {
   position: relative;
   overflow: hidden;
-  width: 100%;
-  height: 48px;
-  border-radius: 13px;
-  border: none !important;
-  background: linear-gradient(120deg, #1b1464 0%, #2b2aa8 40%, #0080e2 75%, #01b4b6 100%) !important;
-  background-size: 180% 100% !important;
-  background-position: 0% 50% !important;
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: 0.2px;
-  box-shadow:
-    0 1px 0 rgb(255 255 255 / 18%) inset,
-    0 10px 24px -8px rgb(27 20 100 / 55%);
-  transition: background-position 0.7s var(--ld-ease), transform 0.2s ease, box-shadow 0.3s ease !important;
+  background-image: linear-gradient(120deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 82%) 100%);
+  box-shadow: 0 10px 24px -10px hsl(var(--primary) / 60%);
+  transition: transform 0.2s ease, box-shadow 0.3s ease;
 }
 
-/* light sweep on hover */
-.lameduse-auth .login-button::before,
-.lameduse-auth .signup-button::before {
+:where(.lameduse-auth) .login-form button[type="submit"].w-full::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 32%) 50%, transparent 70%);
+  background: linear-gradient(110deg, transparent 30%, rgb(255 255 255 / 28%) 50%, transparent 70%);
   transform: translateX(-120%);
-  transition: transform 0.9s var(--ld-ease);
+  transition: transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
   pointer-events: none;
 }
 
-.lameduse-auth .login-button:hover,
-.lameduse-auth .login-button:focus-visible,
-.lameduse-auth .signup-button:hover,
-.lameduse-auth .signup-button:focus-visible {
-  background-position: 100% 50% !important;
+:where(.lameduse-auth) .login-form button[type="submit"].w-full:hover {
   transform: translateY(-1px);
-  box-shadow:
-    0 1px 0 rgb(255 255 255 / 20%) inset,
-    0 16px 32px -10px rgb(0 96 200 / 55%);
+  box-shadow: 0 16px 32px -12px hsl(var(--primary) / 65%);
 }
 
-.lameduse-auth .login-button:hover::before,
-.lameduse-auth .signup-button:hover::before {
+:where(.lameduse-auth) .login-form button[type="submit"].w-full:hover::after {
   transform: translateX(120%);
 }
 
-.lameduse-auth .login-button:active,
-.lameduse-auth .signup-button:active {
-  transform: translateY(0) scale(0.99);
-}
-
-/* ── Providers: "Continue with" divider + equal tiles ─────────── */
-
-/* Divider only when providers follow the form and at least one is visible (:has degrades to no divider). */
-.lameduse-auth form .login-providers:has(a) {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  column-gap: 14px;
-  margin-top: 18px;
-}
-
-.lameduse-auth form .login-providers:has(a)::before,
-.lameduse-auth form .login-providers:has(a)::after {
-  content: "";
-  grid-row: 1;
-  height: 1px;
-  background: var(--ld-divider);
-}
-
-.lameduse-auth form .login-providers:has(a)::before {
-  grid-column: 1;
-}
-
-.lameduse-auth form .login-providers:has(a)::after {
-  grid-column: 3;
-}
-
-/* The first child only holds the item's custom <style>; it carries the divider label */
-.lameduse-auth form .login-providers:has(a) > div:first-child {
-  grid-row: 1;
-  grid-column: 2;
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  color: var(--ld-muted);
-  white-space: nowrap;
-}
-
-.lameduse-auth form .login-providers:has(a) > div:first-child::before {
-  content: var(--ld-divider-label);
-}
-
-.lameduse-auth .login-providers > .ant-form-item {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  margin: 14px 0 4px;
-}
-
-.lameduse-auth .login-providers-small .ant-form-item-control-input-content {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-}
-
-.lameduse-auth .login-providers-small .ant-form-item-control-input-content > span {
-  display: flex;
-  flex: 1 1 0;
-  min-width: 54px;
-}
-
-.lameduse-auth .login-providers-small .ant-form-item-control-input-content > span > a {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 46px;
-  border-radius: 13px;
-  background: var(--ld-tile-bg);
-  border: 1px solid var(--ld-tile-border);
-  transition: transform 0.25s var(--ld-ease), border-color 0.2s ease, box-shadow 0.25s ease;
-}
-
-.lameduse-auth .login-providers-small .ant-form-item-control-input-content > span > a:hover {
-  transform: translateY(-2px);
-  border-color: var(--ld-input-hover);
-  box-shadow: 0 10px 22px -12px rgb(0 80 180 / 45%);
-}
-
-.lameduse-auth .login-providers-small .provider-img {
-  width: 22px !important;
-  height: 22px !important;
-  margin: 0 !important;
-  border-radius: 5px;
-  box-shadow: none !important;
-  transform: none !important;
-}
-
-/* Full-width provider buttons (rule "big") */
-.lameduse-auth .login-providers-big a > div,
-.lameduse-auth .login-providers-big button {
-  border-radius: 13px !important;
-  box-shadow: none !important;
-  border: 1px solid var(--ld-tile-border) !important;
-  transition: transform 0.25s var(--ld-ease), box-shadow 0.25s ease !important;
-}
-
-.lameduse-auth .login-providers-big a:hover > div,
-.lameduse-auth .login-providers-big button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 22px -12px rgb(0 80 180 / 45%) !important;
-}
-
-/* Signup page providers (plain spans in the form) */
-.lameduse-auth .provider-img {
-  border-radius: 10px;
-  transition: transform 0.25s var(--ld-ease), box-shadow 0.25s ease;
-}
-
-.lameduse-auth .provider-img:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 18px -8px rgb(0 0 0 / 30%);
-}
-
-/* ── Sign-up link: separated footer ───────────────────────────── */
-.lameduse-auth .login-signup-link {
-  order: 99; /* always last, whatever the item order configured in the admin */
-  display: flex; /* default item CSS sets justify-content: end */
-  justify-content: center;
-  margin: 18px 0 0;
-  padding-top: 18px;
-  border-top: 1px solid var(--ld-divider);
-  font-size: 14px;
-  text-align: center;
-  color: var(--ld-muted);
-}
-
-/* Monochrome brand logos are black: invert them on dark tiles */
-.lameduse-auth-dark .provider-img[src*="github" i],
-.lameduse-auth-dark .provider-img[src*="apple" i],
-.lameduse-auth-dark .provider-img[src*="twitter" i] {
-  filter: invert(1);
-}
-
-.lameduse-auth .login-signup-link:has(> div > div:empty) {
-  display: none;
-}
-
-/* ── "Continue with" signed-in box ────────────────────────────── */
-.lameduse-auth .login-form button {
-  max-width: 100%;
-}
-
-/* ── Misc ─────────────────────────────────────────────────────── */
-.lameduse-auth .ant-radio-button-wrapper-checked {
-  background: var(--ld-indigo) !important;
-  border-color: var(--ld-indigo) !important;
-  color: #fff !important;
-}
-
-.lameduse-auth .ant-radio-button-wrapper-checked::before {
-  background: var(--ld-indigo) !important;
-}
-
-.lameduse-auth .verification-code .ant-btn-primary,
-.lameduse-auth .signup-email-code .ant-btn-primary,
-.lameduse-auth .phone-code .ant-btn-primary {
-  border-radius: 12px;
-  background: var(--ld-indigo);
-  border-color: var(--ld-indigo);
-}
-
-.lameduse-auth .verification-code .ant-btn-primary:hover,
-.lameduse-auth .signup-email-code .ant-btn-primary:hover,
-.lameduse-auth .phone-code .ant-btn-primary:hover {
-  background: var(--ld-blue);
-  border-color: var(--ld-blue);
-}
-
-.lameduse-auth .ant-divider-inner-text {
-  color: var(--ld-muted);
-  font-size: 13px;
-}
-
-.lameduse-auth .ant-result-title {
-  color: var(--ld-text);
-}
-
-.lameduse-auth .ant-spin-dot-item {
-  background-color: var(--ld-blue);
-}
-
-.lameduse-auth .ant-popover .ant-progress-bg {
-  background: linear-gradient(90deg, #1b1464, #01b4b6);
-}
-
-/* ── Responsive ───────────────────────────────────────────────── */
-@media screen and (max-width: 600px) {
-  .lameduse-auth .login-panel,
-  .lameduse-auth .login-panel-dark {
-    margin: 24px auto;
-
-    /* Explicit width: otherwise the card sizes to its content (long translations) and the
-       flex ancestors, which cannot shrink below their content, push it past the screen */
-    width: calc(100vw - 32px);
-    max-width: 440px;
-    border-radius: 22px;
-  }
-
-  .lameduse-auth .login-form {
-    padding: 56px 20px 26px;
-  }
-
-  .lameduse-auth .login-form form {
-    width: 100% !important;
-  }
-
-  /* Many sign-in methods on a phone: segments wrap onto extra rows instead of being squeezed.
-     The sliding pill only works on one row, so the active segment gets its own background. */
-  .lameduse-auth .signin-methods .ant-tabs-nav-list {
-    flex-wrap: wrap;
-    gap: 4px;
-    transform: none !important;
-  }
-
-  .lameduse-auth .signin-methods .ant-tabs-tab {
-    flex: 1 1 auto;
-    padding: 7px 10px !important;
-  }
-
-  .lameduse-auth .signin-methods .ant-tabs-tab-btn {
-    display: block;
-    white-space: nowrap;
-  }
-
-  .lameduse-auth .signin-methods .ant-tabs-ink-bar {
-    display: none;
-  }
-
-  .lameduse-auth .signin-methods .ant-tabs-tab-active {
-    background: var(--ld-seg-pill);
-    box-shadow: var(--ld-seg-pill-shadow);
-  }
-
-  .lameduse-auth .signin-methods .ant-tabs-nav-operations {
-    display: none !important;
-  }
+/* The footer and the top bar read over the moving background */
+:where(.lameduse-auth) #footer,
+:where(.lameduse-auth) .login-topbar > * {
+  text-shadow: none;
 }
 
 /* ── Reduced motion ───────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  .lameduse-auth *,
-  .lameduse-auth *::before,
-  .lameduse-auth *::after {
+  .ld-blob,
+  :where(.lameduse-auth) .login-panel,
+  :where(.lameduse-auth) .login-form > * {
     animation: none !important;
-    transition-duration: 0.01ms !important;
+  }
+
+  :where(.lameduse-auth) .login-form button[type="submit"].w-full::after {
+    transition: none;
   }
 }

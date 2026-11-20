@@ -102,7 +102,11 @@ func (c *ApiController) UpdateAdapter() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateAdapter(id, &adapter))
+	if !c.checkAdapterStorage(&adapter) {
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.UpdateAdapter(id, &adapter))
 	c.ServeJSON()
 }
 
@@ -121,7 +125,11 @@ func (c *ApiController) AddAdapter() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddAdapter(&adapter))
+	if !c.checkAdapterStorage(&adapter) {
+		return
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddAdapter(&adapter))
 	c.ServeJSON()
 }
 
@@ -140,6 +148,30 @@ func (c *ApiController) DeleteAdapter() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteAdapter(&adapter))
+	c.Data["json"] = WrapActionResponse(object.DeleteAdapter(&adapter))
 	c.ServeJSON()
+}
+
+func (c *ApiController) checkAdapterStorage(adapter *object.Adapter) bool {
+	if c.IsGlobalAdmin() {
+		return true
+	}
+
+	if !adapter.UseSameDb && (adapter.DatabaseType == "sqlite3" || adapter.DatabaseType == "sqlite") {
+		c.ResponseError(c.T("auth:Unauthorized operation"))
+		return false
+	}
+
+	err := object.CheckSameDbAdapterTable(adapter)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return false
+	}
+
+	err = object.CheckAdapterHost(adapter)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return false
+	}
+	return true
 }

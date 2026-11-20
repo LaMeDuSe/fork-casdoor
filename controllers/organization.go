@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/beego/beego/v2/core/utils/pagination"
+	"github.com/casdoor/casdoor/ee"
 	"github.com/casdoor/casdoor/object"
 	"github.com/casdoor/casdoor/util"
 )
@@ -40,13 +41,21 @@ func (c *ApiController) GetOrganizations() {
 	organizationName := c.Ctx.Input.Query("organizationName")
 
 	isGlobalAdmin := c.IsGlobalAdmin()
+	currentUser := c.GetCurrentUser()
+	if !isGlobalAdmin && currentUser == nil {
+		c.ResponseError(c.T("general:Please sign in first"))
+		return
+	}
+
 	if limit == "" || page == "" {
 		var organizations []*object.Organization
 		var err error
 		if isGlobalAdmin {
-			organizations, err = object.GetMaskedOrganizations(object.GetOrganizations(owner))
+			orgs, orgErr := object.GetOrganizations(owner)
+			organizations, err = object.GetMaskedOrganizations(true, orgs, orgErr)
 		} else {
-			organizations, err = object.GetMaskedOrganizations(object.GetOrganizations(owner, c.getCurrentUser().Owner))
+			orgs, orgErr := object.GetOrganizations(owner, currentUser.Owner)
+			organizations, err = object.GetMaskedOrganizations(false, orgs, orgErr)
 		}
 
 		if err != nil {
@@ -57,7 +66,8 @@ func (c *ApiController) GetOrganizations() {
 		c.ResponseOk(organizations)
 	} else {
 		if !isGlobalAdmin {
-			organizations, err := object.GetMaskedOrganizations(object.GetOrganizations(owner, c.getCurrentUser().Owner))
+			orgs, orgErr := object.GetOrganizations(owner, currentUser.Owner)
+			organizations, err := object.GetMaskedOrganizations(false, orgs, orgErr)
 			if err != nil {
 				c.ResponseError(err.Error())
 				return
@@ -72,7 +82,8 @@ func (c *ApiController) GetOrganizations() {
 			}
 
 			paginator := pagination.NewPaginator(c.Ctx.Request, limit, count)
-			organizations, err := object.GetMaskedOrganizations(object.GetPaginationOrganizations(owner, organizationName, paginator.Offset(), limit, field, value, sortField, sortOrder))
+			orgs, orgErr := object.GetPaginationOrganizations(owner, organizationName, paginator.Offset(), limit, field, value, sortField, sortOrder)
+			organizations, err := object.GetMaskedOrganizations(true, orgs, orgErr)
 			if err != nil {
 				c.ResponseError(err.Error())
 				return
@@ -92,7 +103,8 @@ func (c *ApiController) GetOrganizations() {
 // @router /get-organization [get]
 func (c *ApiController) GetOrganization() {
 	id := c.Ctx.Input.Query("id")
-	organization, err := object.GetMaskedOrganization(object.GetOrganization(id))
+	org, orgErr := object.GetOrganization(id)
+	organization, err := object.GetMaskedOrganization(c.IsGlobalAdmin(), org, orgErr)
 	if err != nil {
 		c.ResponseError(err.Error())
 		return
@@ -128,13 +140,32 @@ func (c *ApiController) UpdateOrganization() {
 		return
 	}
 
+	if err = object.CheckOrganizationEdition(&organization); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
 	isGlobalAdmin, _ := c.isGlobalAdmin()
 
 	if organization.BalanceCurrency == "" {
 		organization.BalanceCurrency = "USD"
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateOrganization(id, &organization, isGlobalAdmin))
+	oldOrganization, err := object.GetOrganization(id)
+	if err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+	if err = c.checkEnterprisePolicyChange(oldOrganization, &organization); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
+	affected, err := object.UpdateOrganization(id, &organization, isGlobalAdmin, c.GetAcceptLanguage())
+	if err == nil && affected {
+		ee.AfterEnterprisePolicyChange(oldOrganization, &organization)
+	}
+	c.Data["json"] = WrapActionResponse(affected, err)
 	c.ServeJSON()
 }
 
@@ -169,11 +200,32 @@ func (c *ApiController) AddOrganization() {
 		return
 	}
 
+	if err = object.CheckOrganizationEdition(&organization); err != nil {
+		c.ResponseError(err.Error())
+		return
+	}
+
 	if organization.BalanceCurrency == "" {
 		organization.BalanceCurrency = "USD"
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddOrganization(&organization))
+	if len(organization.AccountItems) == 0 {
+		organization.AccountItems = object.GetDefaultAccountItems()
+	}
+
+	if len(organization.PasswordOptions) == 0 {
+		organization.PasswordOptions = []string{"AtLeast6"}
+	}
+
+	if len(organization.CountryCodes) == 0 {
+		organization.CountryCodes = []string{"US", "ES", "FR", "DE", "GB", "CN", "JP", "KR", "VN", "ID", "SG", "IN"}
+	}
+
+	if len(organization.Languages) == 0 {
+		organization.Languages = []string{"en", "es", "fr", "de", "ja", "zh", "vi", "pt", "tr", "pl", "uk"}
+	}
+
+	c.Data["json"] = WrapActionResponse(object.AddOrganization(&organization))
 	c.ServeJSON()
 }
 
@@ -192,7 +244,7 @@ func (c *ApiController) DeleteOrganization() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteOrganization(&organization))
+	c.Data["json"] = WrapActionResponse(object.DeleteOrganization(&organization))
 	c.ServeJSON()
 }
 

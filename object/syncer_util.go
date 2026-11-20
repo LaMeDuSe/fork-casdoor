@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
@@ -29,6 +30,13 @@ import (
 type Credential struct {
 	Value string `json:"value"`
 	Salt  string `json:"salt"`
+}
+
+func (syncer *Syncer) getHttpClient() *http.Client {
+	if syncer.Organization != "built-in" {
+		return util.NewInternetOnlyHttpClient(30 * time.Second)
+	}
+	return &http.Client{Timeout: 30 * time.Second}
 }
 
 // Helper function to unmarshal JSON string into a target interface
@@ -197,6 +205,8 @@ func (syncer *Syncer) setUserByKeyValue(user *User, key string, value string) {
 		user.Birthday = value
 	case "Education":
 		user.Education = value
+	case "UidNumber":
+		user.UidNumber = util.ParseInt(value)
 	case "Score":
 		user.Score = util.ParseInt(value)
 	case "Ranking":
@@ -375,7 +385,7 @@ func (syncer *Syncer) getOriginalUsersFromMap(results []map[string]sql.NullStrin
 	return users
 }
 
-func (syncer *Syncer) getMapFromOriginalUser(user *OriginalUser) map[string]string {
+func (syncer *Syncer) GetMapFromOriginalUser(user *OriginalUser) map[string]string {
 	m := map[string]string{}
 	m["Name"] = user.Name
 	m["CreatedTime"] = user.CreatedTime
@@ -386,9 +396,12 @@ func (syncer *Syncer) getMapFromOriginalUser(user *OriginalUser) map[string]stri
 	m["Password"] = user.Password
 	m["PasswordSalt"] = user.PasswordSalt
 	m["DisplayName"] = user.DisplayName
+	m["FirstName"] = user.FirstName
+	m["LastName"] = user.LastName
 	m["Avatar"] = syncer.getFullAvatarUrl(user.Avatar)
 	m["PermanentAvatar"] = user.PermanentAvatar
 	m["Email"] = user.Email
+	m["EmailVerified"] = util.BoolToString(user.EmailVerified)
 	m["Phone"] = user.Phone
 	m["Location"] = user.Location
 	m["Address"] = strings.Join(user.Address, "|")
@@ -404,6 +417,7 @@ func (syncer *Syncer) getMapFromOriginalUser(user *OriginalUser) map[string]stri
 	m["Gender"] = user.Gender
 	m["Birthday"] = user.Birthday
 	m["Education"] = user.Education
+	m["UidNumber"] = strconv.Itoa(user.UidNumber)
 	m["Score"] = strconv.Itoa(user.Score)
 	m["Ranking"] = strconv.Itoa(user.Ranking)
 	m["IsDefaultAvatar"] = util.BoolToString(user.IsDefaultAvatar)

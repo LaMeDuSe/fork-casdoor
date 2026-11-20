@@ -29,7 +29,7 @@ type Product struct {
 
 	Image                 string    `xorm:"varchar(100)" json:"image"`
 	Detail                string    `xorm:"varchar(1000)" json:"detail"`
-	Description           string    `xorm:"varchar(200)" json:"description"`
+	Description           string    `xorm:"mediumtext" json:"description"`
 	Tag                   string    `xorm:"varchar(100)" json:"tag"`
 	Currency              string    `xorm:"varchar(100)" json:"currency"`
 	Price                 float64   `json:"price"`
@@ -42,6 +42,8 @@ type Product struct {
 	SuccessUrl            string    `xorm:"varchar(1000)" json:"successUrl"`
 
 	State string `xorm:"varchar(100)" json:"state"`
+
+	Properties map[string]string `xorm:"mediumtext" json:"properties"`
 
 	ProviderObjs []*Provider `xorm:"-" json:"providerObjs"`
 }
@@ -80,7 +82,7 @@ func getProduct(owner string, name string) (*Product, error) {
 	product := Product{Owner: owner, Name: name}
 	existed, err := ormer.Engine.Get(&product)
 	if err != nil {
-		return &product, nil
+		return nil, err
 	}
 
 	if existed {
@@ -255,6 +257,26 @@ func (product *Product) getProvider(providerName string) (*Provider, error) {
 	}
 
 	return provider, nil
+}
+
+func BuyProduct(id string, user *User, providerName, pricingName, planName, host, paymentEnv string, customPrice float64, lang string, couponCode string) (payment *Payment, attachInfo map[string]interface{}, err error) {
+	owner, productName, err := util.GetOwnerAndNameFromIdWithError(id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	order, err := PlaceOrder(owner, []ProductInfo{{
+		Name:        productName,
+		Price:       customPrice,
+		Quantity:    1,
+		PricingName: pricingName,
+		PlanName:    planName,
+	}}, user, couponCode)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return PayOrder(providerName, host, paymentEnv, order, nil, lang)
 }
 
 func ExtendProductWithProviders(product *Product) error {

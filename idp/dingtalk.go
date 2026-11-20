@@ -16,9 +16,9 @@ package idp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -69,7 +69,7 @@ func (idp *DingTalkIdProvider) getConfig(clientId string, clientSecret string, r
 }
 
 type DingTalkAccessToken struct {
-	ErrCode     int    `json:"code"`
+	ErrCode     string `json:"code"`
 	ErrMsg      string `json:"message"`
 	AccessToken string `json:"accessToken"` // Interface call credentials
 	ExpiresIn   int64  `json:"expireIn"`    // access_token interface call credential timeout time, unit (seconds)
@@ -96,8 +96,8 @@ func (idp *DingTalkIdProvider) GetToken(code string) (*oauth2.Token, error) {
 		return nil, err
 	}
 
-	if pToken.ErrCode != 0 {
-		return nil, fmt.Errorf("pToken.Errcode = %d, pToken.Errmsg = %s", pToken.ErrCode, pToken.ErrMsg)
+	if pToken.ErrCode != "" {
+		return nil, fmt.Errorf("pToken.Errcode = %s, pToken.Errmsg = %s", pToken.ErrCode, pToken.ErrMsg)
 	}
 
 	token := &oauth2.Token{
@@ -158,7 +158,7 @@ func (idp *DingTalkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, erro
 	}
 
 	if dtUserInfo.OpenId == "" || dtUserInfo.UnionId == "" {
-		return nil, fmt.Errorf(string(data))
+		return nil, errors.New(string(data))
 	}
 
 	countryCode, err := util.GetCountryCode(dtUserInfo.StateCode, dtUserInfo.Mobile)
@@ -167,34 +167,51 @@ func (idp *DingTalkIdProvider) GetUserInfo(token *oauth2.Token) (*UserInfo, erro
 	}
 
 	userInfo := UserInfo{
-		Id:          dtUserInfo.OpenId,
-		Username:    dtUserInfo.Nick,
-		DisplayName: dtUserInfo.Nick,
-		UnionId:     dtUserInfo.UnionId,
-		Email:       dtUserInfo.Email,
-		Phone:       dtUserInfo.Mobile,
-		CountryCode: countryCode,
-		AvatarUrl:   dtUserInfo.AvatarUrl,
+		Id:            dtUserInfo.OpenId,
+		Username:      dtUserInfo.Nick,
+		DisplayName:   dtUserInfo.Nick,
+		UnionId:       dtUserInfo.UnionId,
+		Email:         dtUserInfo.Email,
+		EmailVerified: dtUserInfo.Email != "",
+		Phone:         dtUserInfo.Mobile,
+		PhoneVerified: dtUserInfo.Mobile != "",
+		CountryCode:   countryCode,
+		AvatarUrl:     dtUserInfo.AvatarUrl,
 	}
 
-	corpAccessToken := idp.getInnerAppAccessToken()
+	corpAccessToken, err := idp.getInnerAppAccessToken()
+	if err != nil {
+		return nil, err
+	}
+
 	userId, err := idp.getUserId(userInfo.UnionId, corpAccessToken)
 	if err != nil {
 		return nil, err
 	}
 
-	corpMobile, corpEmail, unionId, err := idp.getUserCorpEmail(userId, corpAccessToken)
+	userDetail, err := idp.getUserCorpInfo(userId, corpAccessToken)
 	if err == nil {
-		if corpMobile != "" {
-			userInfo.Phone = corpMobile
+		if userDetail.Mobile != "" {
+			userInfo.Phone = userDetail.Mobile
 		}
 
-		if corpEmail != "" {
-			userInfo.Email = corpEmail
+		// The enterprise mailbox is assigned by the org admin, the address book email may be any address
+		if userDetail.OrgEmail != "" {
+			userInfo.Email = userDetail.OrgEmail
+			userInfo.EmailVerified = true
+		} else if userDetail.Email != "" {
+			userInfo.Email = userDetail.Email
+			userInfo.EmailVerified = strings.EqualFold(userDetail.Email, dtUserInfo.Email)
 		}
 
-		if unionId != "" {
-			userInfo.Username = unionId
+		if userDetail.UnionId != "" {
+			userInfo.Username = userDetail.UnionId
+		}
+
+		if userDetail.Title != "" {
+			userInfo.Extra = map[string]string{
+				"title": userDetail.Title,
+			}
 		}
 	}
 
@@ -211,10 +228,6 @@ func (idp *DingTalkIdProvider) postWithBody(body interface{}, url string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
@@ -222,27 +235,47 @@ func (idp *DingTalkIdProvider) postWithBody(body interface{}, url string) ([]byt
 		}
 	}(resp.Body)
 
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("postWithBody() error, url = %s, status = %s, response = %s", url, resp.Status, string(data))
+	}
+
 	return data, nil
 }
 
-func (idp *DingTalkIdProvider) getInnerAppAccessToken() string {
+func (idp *DingTalkIdProvider) getInnerAppAccessToken() (string, error) {
 	body := make(map[string]string)
 	body["appKey"] = idp.Config.ClientID
 	body["appSecret"] = idp.Config.ClientSecret
 	respBytes, err := idp.postWithBody(body, "https://api.dingtalk.com/v1.0/oauth2/accessToken")
 	if err != nil {
-		log.Println(err.Error())
+		return "", err
 	}
 
 	var data struct {
+		ErrCode     string `json:"code"`
+		ErrMsg      string `json:"message"`
 		ExpireIn    int    `json:"expireIn"`
 		AccessToken string `json:"accessToken"`
 	}
 	err = json.Unmarshal(respBytes, &data)
 	if err != nil {
-		log.Println(err.Error())
+		return "", err
 	}
-	return data.AccessToken
+
+	if data.ErrCode != "" {
+		return "", fmt.Errorf("getInnerAppAccessToken() error, code = %s, message = %s", data.ErrCode, data.ErrMsg)
+	}
+
+	if data.AccessToken == "" {
+		return "", fmt.Errorf("getInnerAppAccessToken() error, accessToken is empty, response = %s", string(respBytes))
+	}
+
+	return data.AccessToken, nil
 }
 
 func (idp *DingTalkIdProvider) getUserId(unionId string, accessToken string) (string, error) {
@@ -267,34 +300,38 @@ func (idp *DingTalkIdProvider) getUserId(unionId string, accessToken string) (st
 	if data.ErrCode == 60121 {
 		return "", fmt.Errorf("该应用只允许本企业内部用户登录，您不属于该企业，无法登录")
 	} else if data.ErrCode != 0 {
-		return "", fmt.Errorf(data.ErrMessage)
+		return "", errors.New(data.ErrMessage)
 	}
 	return data.Result.UserId, nil
 }
 
-func (idp *DingTalkIdProvider) getUserCorpEmail(userId string, accessToken string) (string, string, string, error) {
+type DingTalkUserDetail struct {
+	Mobile   string `json:"mobile"`
+	Email    string `json:"email"`
+	OrgEmail string `json:"org_email"`
+	UnionId  string `json:"unionid"`
+	Title    string `json:"title"`
+}
+
+func (idp *DingTalkIdProvider) getUserCorpInfo(userId string, accessToken string) (*DingTalkUserDetail, error) {
 	// https://open.dingtalk.com/document/isvapp/query-user-details
 	body := make(map[string]string)
 	body["userid"] = userId
 	respBytes, err := idp.postWithBody(body, "https://oapi.dingtalk.com/topapi/v2/user/get?access_token="+accessToken)
 	if err != nil {
-		return "", "", "", err
+		return nil, err
 	}
 
 	var data struct {
-		ErrMessage string `json:"errmsg"`
-		Result     struct {
-			Mobile  string `json:"mobile"`
-			Email   string `json:"email"`
-			UnionId string `json:"unionid"`
-		} `json:"result"`
+		ErrMessage string             `json:"errmsg"`
+		Result     DingTalkUserDetail `json:"result"`
 	}
 	err = json.Unmarshal(respBytes, &data)
 	if err != nil {
-		return "", "", "", err
+		return nil, err
 	}
 	if data.ErrMessage != "ok" {
-		return "", "", "", fmt.Errorf(data.ErrMessage)
+		return nil, errors.New(data.ErrMessage)
 	}
-	return data.Result.Mobile, data.Result.Email, data.Result.UnionId, nil
+	return &data.Result, nil
 }

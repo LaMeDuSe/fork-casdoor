@@ -75,16 +75,16 @@ type DingtalkAccessTokenResp struct {
 }
 
 type DingtalkUser struct {
-	UserId     string `json:"userid"`
-	UnionId    string `json:"unionid"`
-	Name       string `json:"name"`
-	Department []int  `json:"dept_id_list"`
-	Position   string `json:"title"`
-	Mobile     string `json:"mobile"`
-	Email      string `json:"email"`
-	Avatar     string `json:"avatar"`
-	JobNumber  string `json:"job_number"`
-	Active     bool   `json:"active"`
+	UserId     string  `json:"userid"`
+	UnionId    string  `json:"unionid"`
+	Name       string  `json:"name"`
+	Department []int64 `json:"dept_id_list"`
+	Position   string  `json:"title"`
+	Mobile     string  `json:"mobile"`
+	Email      string  `json:"email"`
+	Avatar     string  `json:"avatar"`
+	JobNumber  string  `json:"job_number"`
+	Active     bool    `json:"active"`
 }
 
 type DingtalkUserListResp struct {
@@ -406,35 +406,67 @@ func (p *DingtalkSyncerProvider) getDingtalkUsers() ([]*OriginalUser, error) {
 	return originalUsers, nil
 }
 
+// getDingtalkUserFieldValue extracts a field value from DingtalkUser by field name
+func (p *DingtalkSyncerProvider) getDingtalkUserFieldValue(dingtalkUser *DingtalkUser, fieldName string) string {
+	switch fieldName {
+	case "userid":
+		return dingtalkUser.UserId
+	case "unionid":
+		return dingtalkUser.UnionId
+	case "name":
+		return dingtalkUser.Name
+	case "email":
+		return dingtalkUser.Email
+	case "mobile":
+		return dingtalkUser.Mobile
+	case "avatar":
+		return dingtalkUser.Avatar
+	case "title":
+		return dingtalkUser.Position
+	case "job_number":
+		return dingtalkUser.JobNumber
+	case "active":
+		// Invert the boolean because active=true means NOT forbidden
+		return util.BoolToString(!dingtalkUser.Active)
+	default:
+		return ""
+	}
+}
+
 // dingtalkUserToOriginalUser converts DingTalk user to Casdoor OriginalUser
 func (p *DingtalkSyncerProvider) dingtalkUserToOriginalUser(dingtalkUser *DingtalkUser) *OriginalUser {
-	// Use unionid as name to be consistent with OAuth provider
-	// Fallback to userId if unionid is not available
-	userName := dingtalkUser.UserId
-	if dingtalkUser.UnionId != "" {
-		userName = dingtalkUser.UnionId
+	user := &OriginalUser{
+		Address:    []string{},
+		Properties: map[string]string{},
+		Groups:     []string{},
+		DingTalk:   dingtalkUser.UserId, // Link DingTalk provider account
 	}
 
-	user := &OriginalUser{
-		Id:          dingtalkUser.UserId,
-		Name:        userName,
-		DisplayName: dingtalkUser.Name,
-		Email:       dingtalkUser.Email,
-		Phone:       dingtalkUser.Mobile,
-		Avatar:      dingtalkUser.Avatar,
-		Title:       dingtalkUser.Position,
-		Address:     []string{},
-		Properties:  map[string]string{},
-		Groups:      []string{},
+	// Apply TableColumns mapping if configured
+	if len(p.Syncer.TableColumns) > 0 {
+		for _, tableColumn := range p.Syncer.TableColumns {
+			value := p.getDingtalkUserFieldValue(dingtalkUser, tableColumn.Name)
+			p.Syncer.setUserByKeyValue(user, tableColumn.CasdoorName, value)
+		}
+	} else {
+		// Fallback to default mapping for backward compatibility
+		user.Id = dingtalkUser.UserId
+		user.Name = dingtalkUser.UserId
+		if dingtalkUser.UnionId != "" {
+			user.Name = dingtalkUser.UnionId
+		}
+		user.DisplayName = dingtalkUser.Name
+		user.Email = dingtalkUser.Email
+		user.Phone = dingtalkUser.Mobile
+		user.Avatar = dingtalkUser.Avatar
+		user.Title = dingtalkUser.Position
+		user.IsForbidden = !dingtalkUser.Active
 	}
 
 	// Add department IDs to Groups field
 	for _, deptId := range dingtalkUser.Department {
-		user.Groups = append(user.Groups, fmt.Sprintf("%d", deptId))
+		user.Groups = append(user.Groups, p.getDingtalkGroupId(deptId))
 	}
-
-	// Set IsForbidden based on active status (active=false means user is forbidden)
-	user.IsForbidden = !dingtalkUser.Active
 
 	// Set CreatedTime to current time if not set
 	if user.CreatedTime == "" {
@@ -458,6 +490,13 @@ func (p *DingtalkSyncerProvider) GetOriginalGroups() ([]*OriginalGroup, error) {
 		return nil, err
 	}
 
+	// Departments in this sync's scope. A department whose parent is out of scope
+	// becomes a top group (same rule as the WeCom adapter).
+	deptIdSet := map[int64]bool{}
+	for _, deptId := range deptIds {
+		deptIdSet[deptId] = true
+	}
+
 	// Get detailed information for each department
 	originalGroups := []*OriginalGroup{}
 	for _, deptId := range deptIds {
@@ -468,24 +507,43 @@ func (p *DingtalkSyncerProvider) GetOriginalGroups() ([]*OriginalGroup, error) {
 			continue
 		}
 
-		originalGroup := p.dingtalkDepartmentToOriginalGroup(dept)
+		hasParent := deptIdSet[dept.ParentId] && dept.ParentId != dept.DeptId
+		originalGroup := p.dingtalkDepartmentToOriginalGroup(dept, hasParent)
 		originalGroups = append(originalGroups, originalGroup)
 	}
 
 	return originalGroups, nil
 }
 
+// getDingtalkGroupName returns the Casdoor group name of a DingTalk department. The
+// department ID is used as the name because DingTalk department names are not unique.
+func getDingtalkGroupName(deptId int64) string {
+	return fmt.Sprintf("%d", deptId)
+}
+
+// getDingtalkGroupId returns the Casdoor group ID ("organization/name") of a DingTalk
+// department. User.Groups holds full group IDs, so a bare department ID would not match
+// any group and the membership would be silently dropped by the group and permission APIs.
+func (p *DingtalkSyncerProvider) getDingtalkGroupId(deptId int64) string {
+	return util.GetId(p.Syncer.Organization, getDingtalkGroupName(deptId))
+}
+
 // dingtalkDepartmentToOriginalGroup converts DingTalk department to Casdoor OriginalGroup
-func (p *DingtalkSyncerProvider) dingtalkDepartmentToOriginalGroup(dept *DingtalkDepartment) *OriginalGroup {
-	// Convert department ID to string for group ID
-	deptIdStr := fmt.Sprintf("%d", dept.DeptId)
+func (p *DingtalkSyncerProvider) dingtalkDepartmentToOriginalGroup(dept *DingtalkDepartment, hasParent bool) *OriginalGroup {
+	deptIdStr := getDingtalkGroupName(dept.DeptId)
+
+	parentId := ""
+	if hasParent {
+		parentId = getDingtalkGroupName(dept.ParentId)
+	}
 
 	return &OriginalGroup{
-		Id:          deptIdStr,
+		Id:          p.getDingtalkGroupId(dept.DeptId),
 		Name:        deptIdStr,    // Use ID as name for uniqueness
 		DisplayName: dept.Name,    // Use actual name as display name
 		Description: "",           // DingTalk doesn't provide description
 		Type:        "department", // Mark as department type
+		ParentId:    parentId,     // Parent department's group name
 		Manager:     "",           // DingTalk doesn't provide manager in dept details
 		Email:       "",           // DingTalk doesn't provide email for departments
 	}
@@ -505,10 +563,10 @@ func (p *DingtalkSyncerProvider) GetOriginalUserGroups(userId string) ([]string,
 		return nil, err
 	}
 
-	// Convert department IDs to strings
+	// Convert department IDs to Casdoor group IDs
 	groupIds := []string{}
 	for _, deptId := range user.Department {
-		groupIds = append(groupIds, fmt.Sprintf("%d", deptId))
+		groupIds = append(groupIds, p.getDingtalkGroupId(deptId))
 	}
 
 	return groupIds, nil

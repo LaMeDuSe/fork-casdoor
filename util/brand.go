@@ -23,4 +23,8 @@ const (
 	BrandLogoGradSvg = "https://assets.lameduse.net/logo/lameduse_logo_grad.svg"
 	BrandLogoFull    = "https://assets.lameduse.net/logo/lameduse_logo_grad_text_primary_bg_white.png"
 	BrandName        = "Lameduse"
+
+	// BrandFavicon is the favicon URL written in web/index.html; routers/branding.go swaps it
+	// for the organization's favicon, so it must match the HTML byte for byte.
+	BrandFavicon = BrandLogoGradPng
 )

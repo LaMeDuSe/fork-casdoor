@@ -44,11 +44,16 @@ type Order struct {
 	// Order State
 	State   string `xorm:"varchar(100)" json:"state"`
 	Message string `xorm:"varchar(2000)" json:"message"`
+
+	// Coupon Info
+	CouponName     string  `xorm:"varchar(100)" json:"couponName"`
+	CouponDiscount float64 `json:"couponDiscount"` // Discount amount applied by coupon
 }
 
 type ProductInfo struct {
 	Owner       string  `json:"owner"`
 	Name        string  `json:"name"`
+	CreatedTime string  `json:"createdTime,omitempty"`
 	DisplayName string  `json:"displayName"`
 	Image       string  `json:"image,omitempty"`
 	Detail      string  `json:"detail,omitempty"`
@@ -60,9 +65,9 @@ type ProductInfo struct {
 	PlanName    string  `json:"planName,omitempty"`
 }
 
-func GetOrderCount(owner, field, value string) (int64, error) {
+func GetOrderCount(owner, user, field, value string) (int64, error) {
 	session := GetSession(owner, -1, -1, field, value, "", "")
-	return session.Count(&Order{Owner: owner})
+	return session.Count(&Order{Owner: owner, User: user})
 }
 
 func GetOrders(owner string) ([]*Order, error) {
@@ -85,10 +90,10 @@ func GetUserOrders(owner, user string) ([]*Order, error) {
 	return orders, nil
 }
 
-func GetPaginationOrders(owner string, offset, limit int, field, value, sortField, sortOrder string) ([]*Order, error) {
+func GetPaginationOrders(owner, user string, offset, limit int, field, value, sortField, sortOrder string) ([]*Order, error) {
 	orders := []*Order{}
 	session := GetSession(owner, offset, limit, field, value, sortField, sortOrder)
-	err := session.Find(&orders, &Order{Owner: owner})
+	err := session.Find(&orders, &Order{Owner: owner, User: user})
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +189,32 @@ func UpdateOrder(id string, order *Order) (bool, error) {
 }
 
 func AddOrder(order *Order) (bool, error) {
+	// orders created from the UI only carry the product names, so the product infos and
+	// the price need to be filled in here, the same way UpdateOrder() does it
+	if len(order.Products) > 0 && len(order.ProductInfos) == 0 {
+		products, err := getOrderProducts(order.Owner, order.Products)
+		if err != nil {
+			return false, err
+		}
+
+		productInfos := make([]ProductInfo, 0, len(products))
+		price := 0.0
+		for _, product := range products {
+			productInfos = append(productInfos, ProductInfo{
+				Name:        product.Name,
+				DisplayName: product.DisplayName,
+				Image:       product.Image,
+				Detail:      product.Detail,
+				Price:       product.Price,
+				IsRecharge:  product.IsRecharge,
+			})
+			price += product.Price
+		}
+
+		order.ProductInfos = productInfos
+		order.Price = price
+	}
+
 	affected, err := ormer.Engine.Insert(order)
 	if err != nil {
 		return false, err

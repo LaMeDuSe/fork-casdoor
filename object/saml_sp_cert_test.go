@@ -49,24 +49,18 @@ func newTestCert(t *testing.T, cn string) ([]byte, *x509.Certificate) {
 	return der, cert
 }
 
-// CVE-2026-9090: the trust store must only contain the configured IdP certificate,
-// never a certificate supplied inside the SAMLResponse.
-func TestBuildSpCertificateStoreIgnoresResponseCertificate(t *testing.T) {
+// CVE-2026-9090: the trust store must only contain the configured IdP certificate.
+// buildSpCertificateStore no longer receives the SAMLResponse at all, so a certificate an
+// attacker embeds in it cannot reach the trust store; this guards against reintroducing that.
+func TestBuildSpCertificateStoreUsesConfiguredCertificateOnly(t *testing.T) {
 	idpDer, idpCert := newTestCert(t, "trusted-idp")
-	attackerDer, _ := newTestCert(t, "attacker")
-
-	forgedResponse := base64.StdEncoding.EncodeToString([]byte(
-		"<samlp:Response><ds:Signature><ds:KeyInfo><ds:X509Data><ds:X509Certificate>" +
-			base64.StdEncoding.EncodeToString(attackerDer) +
-			"</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature></samlp:Response>"))
-
 	provider := &Provider{
 		Name: "saml-test",
 		Type: "Keycloak",
 		IdP:  string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: idpDer})),
 	}
 
-	store, err := buildSpCertificateStore(provider, forgedResponse)
+	store, err := buildSpCertificateStore(provider)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +70,14 @@ func TestBuildSpCertificateStoreIgnoresResponseCertificate(t *testing.T) {
 
 	// Base64 (non-PEM) configured certificates keep working
 	provider.IdP = base64.StdEncoding.EncodeToString(idpDer)
-	store, err = buildSpCertificateStore(provider, forgedResponse)
+	store, err = buildSpCertificateStore(provider)
 	if err != nil || !store.Roots[0].Equal(idpCert) {
 		t.Fatalf("base64 IdP certificate not used: %v", err)
 	}
 
 	// No configured certificate: refuse instead of trusting the response
 	provider.IdP = ""
-	if _, err = buildSpCertificateStore(provider, forgedResponse); err == nil {
+	if _, err = buildSpCertificateStore(provider); err == nil {
 		t.Fatal("expected an error when no IdP certificate is configured")
 	}
 }

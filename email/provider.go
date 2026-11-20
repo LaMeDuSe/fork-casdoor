@@ -18,14 +18,19 @@ type EmailProvider interface {
 	Send(fromAddress string, fromName string, toAddress []string, subject string, content string) error
 }
 
-func GetEmailProvider(typ string, clientId string, clientSecret string, host string, port int, disableSsl bool, endpoint string, method string, httpHeaders map[string]string, bodyMapping map[string]string, contentType string, enableProxy bool) EmailProvider {
-	if typ == "Azure ACS" {
+func GetEmailProvider(typ string, clientId string, clientSecret string, host string, port int, sslMode string, endpoint string, method string, httpHeaders map[string]string, bodyMapping map[string]string, contentType string, enableProxy bool, tokenUrl string, scopes string) EmailProvider {
+	switch typ {
+	case "Azure ACS":
 		return NewAzureACSEmailProvider(clientSecret, host)
-	} else if typ == "Custom HTTP Email" {
-		return NewHttpEmailProvider(endpoint, method, httpHeaders, bodyMapping, contentType)
-	} else if typ == "SendGrid" {
+	case "Custom HTTP Email":
+		return NewHttpEmailProvider(endpoint, method, httpHeaders, bodyMapping, contentType, enableProxy)
+	case "SendGrid":
 		return NewSendgridEmailProvider(clientSecret, host, endpoint)
-	} else {
-		return NewSmtpEmailProvider(clientId, clientSecret, host, port, typ, disableSsl, enableProxy)
+	case "Resend":
+		return NewResendEmailProvider(clientSecret)
+	case "Microsoft 365":
+		return NewMicrosoft365EmailProvider(clientId, clientSecret, host, port, sslMode, enableProxy, tokenUrl, scopes)
+	default:
+		return NewSmtpEmailProvider(clientId, clientSecret, host, port, typ, sslMode, enableProxy)
 	}
 }

@@ -46,6 +46,7 @@ func (c *ApiController) GetSessions() {
 			c.ResponseError(err.Error())
 			return
 		}
+		object.MaskSessionIds(sessions...)
 
 		c.ResponseOk(sessions)
 	} else {
@@ -61,6 +62,7 @@ func (c *ApiController) GetSessions() {
 			c.ResponseError(err.Error())
 			return
 		}
+		object.MaskSessionIds(sessions...)
 
 		c.ResponseOk(sessions, paginator.Nums())
 	}
@@ -81,6 +83,7 @@ func (c *ApiController) GetSingleSession() {
 		c.ResponseError(err.Error())
 		return
 	}
+	object.MaskSessionIds(session)
 
 	c.ResponseOk(session)
 }
@@ -100,7 +103,7 @@ func (c *ApiController) UpdateSession() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.UpdateSession(util.GetSessionId(session.Owner, session.Name, session.Application), &session))
+	c.Data["json"] = WrapActionResponse(object.UpdateSession(util.GetSessionId(session.Owner, session.Name, session.Application), &session))
 	c.ServeJSON()
 }
 
@@ -119,7 +122,7 @@ func (c *ApiController) AddSession() {
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.AddSession(&session))
+	c.Data["json"] = WrapActionResponse(object.AddSession(&session))
 	c.ServeJSON()
 }
 
@@ -141,18 +144,20 @@ func (c *ApiController) DeleteSession() {
 	curSessionId := c.Ctx.Input.CruSession.SessionID(context.Background())
 
 	sessionId := c.Ctx.Input.Query("sessionId")
-	if curSessionId == sessionId && sessionId != "" {
+	if sessionId != "" && (sessionId == curSessionId || sessionId == object.GetSessionIdHash(curSessionId)) {
 		c.ResponseError(fmt.Sprintf(c.T("session:session id %s is the current session and cannot be deleted"), curSessionId))
 		return
 	}
 
 	if sessionId != "" {
-		c.Data["json"] = wrapActionResponse(object.DeleteSessionId(util.GetSessionId(session.Owner, session.Name, session.Application), sessionId))
+		// Ending one session is a sign-out of it: the applications signed in with it are told,
+		// and the id is removed from every Session row of the user, not only this one
+		c.Data["json"] = WrapActionResponse(object.LogoutSessionId(util.GetSessionId(session.Owner, session.Name, session.Application), sessionId, c.Ctx.Request.Host))
 		c.ServeJSON()
 		return
 	}
 
-	c.Data["json"] = wrapActionResponse(object.DeleteSession(util.GetSessionId(session.Owner, session.Name, session.Application), curSessionId))
+	c.Data["json"] = WrapActionResponse(object.DeleteSession(util.GetSessionId(session.Owner, session.Name, session.Application), curSessionId))
 	c.ServeJSON()
 }
 

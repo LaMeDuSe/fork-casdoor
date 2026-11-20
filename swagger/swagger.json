@@ -1138,6 +1138,70 @@
                 }
             }
         },
+        "/api/buy-product": {
+            "post": {
+                "tags": [
+                    "Product API"
+                ],
+                "description": "buy product using the deprecated compatibility endpoint, prefer place-order plus pay-order for new integrations",
+                "operationId": "ApiController.BuyProduct",
+                "deprecated": true,
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "id",
+                        "description": "The id ( owner/name ) of the product",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "in": "query",
+                        "name": "providerName",
+                        "description": "The name of the provider",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "in": "query",
+                        "name": "pricingName",
+                        "description": "The name of the pricing (for subscription)",
+                        "type": "string"
+                    },
+                    {
+                        "in": "query",
+                        "name": "planName",
+                        "description": "The name of the plan (for subscription)",
+                        "type": "string"
+                    },
+                    {
+                        "in": "query",
+                        "name": "userName",
+                        "description": "The username to buy product for (admin only)",
+                        "type": "string"
+                    },
+                    {
+                        "in": "query",
+                        "name": "paymentEnv",
+                        "description": "The payment environment",
+                        "type": "string"
+                    },
+                    {
+                        "in": "query",
+                        "name": "customPrice",
+                        "description": "Custom price for recharge products",
+                        "type": "number"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The Response object",
+                        "schema": {
+                            "$ref": "#/definitions/controllers.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/delete-adapter": {
             "post": {
                 "tags": [
@@ -5086,39 +5150,6 @@
                 }
             }
         },
-        "/api/refresh-engines": {
-            "post": {
-                "tags": [
-                    "CLI API"
-                ],
-                "description": "Refresh all CLI engines",
-                "operationId": "ApiController.RefreshEngines",
-                "parameters": [
-                    {
-                        "in": "query",
-                        "name": "m",
-                        "description": "Hash for request validation",
-                        "required": true,
-                        "type": "string"
-                    },
-                    {
-                        "in": "query",
-                        "name": "t",
-                        "description": "Timestamp for request validation",
-                        "required": true,
-                        "type": "string"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "The Response object",
-                        "schema": {
-                            "$ref": "#/definitions/controllers.Response"
-                        }
-                    }
-                }
-            }
-        },
         "/api/remove-policy": {
             "post": {
                 "tags": [
@@ -5170,25 +5201,8 @@
                 }
             }
         },
-        "/api/run-casbin-command": {
-            "get": {
-                "tags": [
-                    "Enforcer API"
-                ],
-                "description": "Call Casbin CLI commands",
-                "operationId": "ApiController.RunCasbinCommand",
-                "responses": {
-                    "200": {
-                        "description": "The Response object",
-                        "schema": {
-                            "$ref": "#/definitions/controllers.Response"
-                        }
-                    }
-                }
-            }
-        },
         "/api/run-syncer": {
-            "get": {
+            "post": {
                 "tags": [
                     "Syncer API"
                 ],
@@ -9975,9 +9989,6 @@
                 "meetup": {
                     "type": "string"
                 },
-                "metamask": {
-                    "type": "string"
-                },
                 "mfaAccounts": {
                     "type": "array",
                     "items": {
@@ -10194,9 +10205,6 @@
                     "type": "string"
                 },
                 "vk": {
-                    "type": "string"
-                },
-                "web3onboard": {
                     "type": "string"
                 },
                 "webauthnCredentials": {
