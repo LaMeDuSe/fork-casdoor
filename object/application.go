@@ -16,6 +16,7 @@ package object
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -825,15 +826,69 @@ func (application *Application) IsRedirectUriValid(redirectUri string) bool {
 	}
 
 	for _, targetUri := range application.RedirectUris {
-		if targetUri == "" {
-			continue
-		}
-		targetUriRegex := regexp.MustCompile(targetUri)
-		if targetUriRegex.MatchString(redirectUri) || strings.Contains(redirectUri, targetUri) {
+		if isRedirectUriMatched(targetUri, redirectUri) {
 			return true
 		}
 	}
 	return false
+}
+
+// redirectUriRegexChars are characters that only appear in a registered redirect URI when the admin
+// intends it as a regular expression (plain URLs never contain them, except "?" which is handled separately).
+const redirectUriRegexChars = `*+^$()[]{}|\`
+
+// isRedirectUriMatched checks a requested redirect URI against one registered entry.
+//
+// CVE-2026-5467: the previous check accepted the URI when the entry matched anywhere in it
+// (unanchored regex or strings.Contains), so "https://evil.com/?x=https://app.com/callback" or
+// "https://app.com.evil.com" passed and the authorization code could be sent to an attacker.
+// Now an entry matches only:
+//  1. exactly;
+//  2. as a URL with the same scheme, host and port, the requested path being the registered
+//     path or below it (segment boundary), so "https://app.com" still allows "https://app.com/callback";
+//  3. as a bare host ("app.com", no scheme): the requested URI's host must be exactly that host;
+//  4. as an explicit regular expression (contains regex syntax), matched against the whole URI.
+func isRedirectUriMatched(targetUri string, redirectUri string) bool {
+	targetUri = strings.TrimSpace(targetUri)
+	if targetUri == "" || redirectUri == "" {
+		return false
+	}
+
+	if redirectUri == targetUri {
+		return true
+	}
+
+	if strings.ContainsAny(targetUri, redirectUriRegexChars) {
+		targetUriRegex, err := regexp.Compile("^(?:" + targetUri + ")$")
+		return err == nil && targetUriRegex.MatchString(redirectUri)
+	}
+
+	requested, err := url.Parse(redirectUri)
+	if err != nil || requested.Host == "" || requested.User != nil {
+		return false
+	}
+
+	if !strings.Contains(targetUri, "://") {
+		return strings.EqualFold(requested.Host, targetUri) || strings.EqualFold(requested.Hostname(), targetUri)
+	}
+
+	target, err := url.Parse(targetUri)
+	if err != nil || target.Host == "" {
+		return false
+	}
+
+	if !strings.EqualFold(requested.Scheme, target.Scheme) || !strings.EqualFold(requested.Host, target.Host) {
+		return false
+	}
+
+	// The registered entry may pin a query string: then it must be identical
+	if target.RawQuery != "" && requested.RawQuery != target.RawQuery {
+		return false
+	}
+
+	targetPath := strings.TrimSuffix(target.Path, "/")
+	requestedPath := requested.Path
+	return targetPath == "" || requestedPath == targetPath || strings.HasPrefix(requestedPath, targetPath+"/")
 }
 
 func (application *Application) IsPasswordEnabled() bool {

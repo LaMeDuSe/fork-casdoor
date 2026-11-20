@@ -1052,6 +1052,16 @@ func GetTokenExchangeToken(application *Application, clientSecret string, subjec
 		subjectScope = claims.Scope
 	}
 
+	// CVE-2026-9094: the signature check alone is not enough, since applications of different
+	// organizations commonly share a signing cert (e.g. cert-built-in). Like every other grant,
+	// only users of the application's organization may obtain a token for it.
+	if subjectOwner != application.Organization {
+		return nil, &TokenError{
+			Error:            InvalidGrant,
+			ErrorDescription: "subject_token was not issued for a user of this application's organization",
+		}, nil
+	}
+
 	// Get the user from the subject token
 	user, err := getUser(subjectOwner, subjectName)
 	if err != nil {
