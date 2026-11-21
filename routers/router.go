@@ -167,6 +167,8 @@ func InitAPI() {
 	web.Router("/api/get-mcp-approvals", &controllers.ApiController{}, "GET:GetMcpApprovals")
 	web.Router("/api/get-mcp-approval", &controllers.ApiController{}, "GET:GetMcpApproval")
 	web.Router("/api/decide-mcp-approval", &controllers.ApiController{}, "POST:DecideMcpApproval")
+	web.Router("/api/get-mcp-changes", &eecontrollers.ApiController{}, "GET:GetMcpChanges")
+	web.Router("/api/rollback-mcp-change", &eecontrollers.ApiController{}, "POST:RollbackMcpChange")
 
 	web.Router("/api/verify-records", &eecontrollers.ApiController{}, "GET:VerifyRecords")
 	web.Router("/api/get-compliance-report", &eecontrollers.ApiController{}, "GET:GetComplianceReport")
@@ -321,6 +323,8 @@ func InitAPI() {
 	web.Router("/api/add-session", &controllers.ApiController{}, "POST:AddSession")
 	web.Router("/api/delete-session", &controllers.ApiController{}, "POST:DeleteSession")
 	web.Router("/api/is-session-duplicated", &controllers.ApiController{}, "GET:IsSessionDuplicated")
+	web.Router("/api/get-my-sessions", &controllers.ApiController{}, "GET:GetMySessions")
+	web.Router("/api/delete-my-session", &controllers.ApiController{}, "POST:DeleteMySession")
 
 	web.Router("/api/get-tokens", &controllers.ApiController{}, "GET:GetTokens")
 	web.Router("/api/get-token", &controllers.ApiController{}, "GET:GetToken")

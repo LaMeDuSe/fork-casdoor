@@ -30,6 +30,7 @@
     "Invalid token": "Jeton invalide",
     "Please sign in again": "Veuillez vous reconnecter",
     "Requested scope exceeds original device authorization scope": "La portée demandée dépasse celle de l'autorisation d'appareil d'origine",
+    "Signing in with a verification code or a magic link is not enabled for your account": "La connexion avec un code de vérification ou un lien magique n'est pas activée pour votre compte",
     "State expected: %s, but got: %s": "État attendu : %s, mais obtenu : %s",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account via %s, please use another way to sign up": "Le compte pour le fournisseur : %s et le nom d'utilisateur : %s (%s) n'existe pas et n'est pas autorisé à s'inscrire en tant que nouveau compte via %s, veuillez utiliser une autre méthode pour vous inscrire",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account, please contact your IT support": "Le compte pour le fournisseur : %s et le nom d'utilisateur : %s (%s) n'existe pas et n'est pas autorisé à s'inscrire comme nouveau compte, veuillez contacter votre support informatique",
@@ -107,6 +108,7 @@
     "Please register using the username corresponding to the invitation code": "Veuillez vous inscrire avec le nom d'utilisateur correspondant au code d'invitation",
     "Session outdated, please login again": "Session expirée, veuillez vous connecter à nouveau",
     "The account has already linked another %s account": "The account has already linked another %s account",
+    "The email domain: %s is not allowed to sign up": "Le domaine d'e-mail : %s n'est pas autorisé à s'inscrire",
     "The invitation code has already been used": "Le code d'invitation a déjà été utilisé",
     "The password is not allowed: %s": "Ce mot de passe n'est pas autorisé : %s",
     "The password must contain at least one special character": "Le mot de passe doit contenir au moins un caractère spécial",
@@ -157,6 +159,7 @@
     "Inactivity timeout": "Délai d'inactivité",
     "Keycloak syncer": "Synchroniseur Keycloak",
     "MCP gateway": "Passerelle MCP",
+    "MCP management tools": "Outils de gestion MCP",
     "MCP tool call approval": "Approbation des appels d'outils MCP",
     "MLPS compliance checklist": "Liste de contrôle de conformité MLPS",
     "Mobile one-click login": "Connexion en un clic par numéro mobile",
@@ -166,13 +169,15 @@
     "Privileged account management": "Gestion des comptes à privilèges",
     "Provisioning to legacy databases": "Provisionnement vers des bases existantes",
     "Push notification MFA": "MFA par notification push",
+    "Rollback of agent changes": "Annulation des modifications des agents",
     "SCIM provisioning": "Provisionnement SCIM",
     "Security dashboard and reports": "Tableau de bord et rapports de sécurité",
     "Security policy": "Politique de sécurité",
     "Separation of duties": "Séparation des tâches",
     "Signing key rotation": "Rotation de la clé de signature",
     "Tamper-proof audit records": "Journaux d'audit infalsifiables",
-    "Three-admin separation": "Séparation des administrateurs système, sécurité et audit"
+    "Three-admin separation": "Séparation des administrateurs système, sécurité et audit",
+    "Trusted organizations": "Organisations de confiance"
   },
   "enforcer": {
     "the adapter: %s is not found": "l'adaptateur : %s est introuvable"
@@ -225,6 +230,7 @@
     "The user: %s cannot be more than one of the system, security and audit admins": "L'utilisateur : %s ne peut pas cumuler les rôles d'administrateur système, sécurité et audit",
     "The user: %s is already an admin of the organization": "L'utilisateur %s est déjà administrateur de l'organisation",
     "The user: %s is listed twice as a delegated admin": "L'utilisateur %s figure deux fois comme administrateur délégué",
+    "Unknown approval of agent changes: %s": "Approbation des modifications des agents inconnue : %s",
     "You cannot review your own access": "Vous ne pouvez pas revoir vos propres accès",
     "You have %d access items to review by %s. Open My access reviews in the console to keep or revoke them.": "Vous avez %d accès à revoir avant le %s. Ouvrez Mes revues des accès dans la console pour les conserver ou les révoquer."
   },
@@ -358,6 +364,7 @@
     "Too many requests, please try again later": "Trop de requêtes, veuillez réessayer plus tard"
   },
   "session": {
+    "The current session cannot be ended here, sign out instead": "La session actuelle ne peut pas être fermée ici, déconnectez-vous plutôt",
     "session id %s is the current session and cannot be deleted": "L'ID de session %s correspond à la session actuelle et ne peut pas être supprimé"
   },
   "storage": {

@@ -30,6 +30,7 @@
     "Invalid token": "无效token",
     "Please sign in again": "请重新登录",
     "Requested scope exceeds original device authorization scope": "请求的 scope 超出了原设备授权的范围",
+    "Signing in with a verification code or a magic link is not enabled for your account": "您的账号未开启验证码或魔法链接登录",
     "State expected: %s, but got: %s": "期望状态为: %s, 实际状态为: %s",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account via %s, please use another way to sign up": "提供商账户: %s 与用户名: %s (%s) 不存在且 不允许通过 %s 注册新账户, 请使用其他方式注册",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account, please contact your IT support": "提供商账户: %s 与用户名: %s (%s) 不存在且 不允许注册新账户, 请联系IT支持",
@@ -107,6 +108,7 @@
     "Please register using the username corresponding to the invitation code": "请使用邀请码关联的用户名注册",
     "Session outdated, please login again": "会话已过期，请重新登录",
     "The account has already linked another %s account": "该账号已绑定另一个 %s 账号",
+    "The email domain: %s is not allowed to sign up": "邮箱域名: %s 不允许注册",
     "The invitation code has already been used": "邀请码已被使用",
     "The password is not allowed: %s": "不能使用这个密码：%s",
     "The password must contain at least one special character": "密码必须包含至少一个特殊字符",
@@ -157,6 +159,7 @@
     "Inactivity timeout": "空闲超时",
     "Keycloak syncer": "Keycloak 同步器",
     "MCP gateway": "MCP 网关",
+    "MCP management tools": "MCP 管理工具",
     "MCP tool call approval": "MCP 工具调用审批",
     "MLPS compliance checklist": "等保核查清单",
     "Mobile one-click login": "本机号码一键登录",
@@ -166,13 +169,15 @@
     "Privileged account management": "特权账号管理",
     "Provisioning to legacy databases": "向老系统数据库供应账号",
     "Push notification MFA": "消息卡片确认登录",
+    "Rollback of agent changes": "回滚智能体的改动",
     "SCIM provisioning": "SCIM 账号供应",
     "Security dashboard and reports": "安全态势和报表",
     "Security policy": "组织安全策略",
     "Separation of duties": "职责分离",
     "Signing key rotation": "签名密钥轮换",
     "Tamper-proof audit records": "审计日志防篡改",
-    "Three-admin separation": "三员分立"
+    "Three-admin separation": "三员分立",
+    "Trusted organizations": "可信组织"
   },
   "enforcer": {
     "the adapter: %s is not found": "适配器: %s 未找到"
@@ -225,6 +230,7 @@
     "The user: %s cannot be more than one of the system, security and audit admins": "用户 %s 不能同时担任系统管理员、安全管理员、审计管理员中的两个",
     "The user: %s is already an admin of the organization": "用户 %s 已经是组织管理员",
     "The user: %s is listed twice as a delegated admin": "用户 %s 被重复设为分级管理员",
+    "Unknown approval of agent changes: %s": "未知的智能体改动审批设置：%s",
     "You cannot review your own access": "不能复核自己的权限",
     "You have %d access items to review by %s. Open My access reviews in the console to keep or revoke them.": "您有 %d 项权限要在 %s 之前复核，请在控制台的“我的权限复核”里逐项保留或回收。"
   },
@@ -358,6 +364,7 @@
     "Too many requests, please try again later": "请求过于频繁，请稍后再试"
   },
   "session": {
+    "The current session cannot be ended here, sign out instead": "当前会话不能在这里结束，请直接退出登录",
     "session id %s is the current session and cannot be deleted": "会话ID %s 是当前会话，无法删除"
   },
   "storage": {

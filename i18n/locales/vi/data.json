@@ -30,6 +30,7 @@
     "Invalid token": "Mã thông báo không hợp lệ",
     "Please sign in again": "Vui lòng đăng nhập lại",
     "Requested scope exceeds original device authorization scope": "Phạm vi yêu cầu vượt quá phạm vi ủy quyền thiết bị ban đầu",
+    "Signing in with a verification code or a magic link is not enabled for your account": "Đăng nhập bằng mã xác minh hoặc liên kết ma thuật chưa được bật cho tài khoản của bạn",
     "State expected: %s, but got: %s": "Trạng thái dự kiến: %s, nhưng nhận được: %s",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account via %s, please use another way to sign up": "Tài khoản cho nhà cung cấp: %s và tên người dùng: %s (%s) không tồn tại và không được phép đăng ký làm tài khoản mới qua %s, vui lòng sử dụng cách khác để đăng ký",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account, please contact your IT support": "Tài khoản cho nhà cung cấp: %s và tên người dùng: %s (%s) không tồn tại và không được phép đăng ký như một tài khoản mới, vui lòng liên hệ với bộ phận hỗ trợ công nghệ thông tin của bạn",
@@ -107,6 +108,7 @@
     "Please register using the username corresponding to the invitation code": "Vui lòng đăng ký bằng tên người dùng tương ứng với mã mời",
     "Session outdated, please login again": "Phiên làm việc hết hạn, vui lòng đăng nhập lại",
     "The account has already linked another %s account": "The account has already linked another %s account",
+    "The email domain: %s is not allowed to sign up": "Tên miền email: %s không được phép đăng ký",
     "The invitation code has already been used": "Mã mời đã được sử dụng",
     "The password is not allowed: %s": "Không được dùng mật khẩu này: %s",
     "The password must contain at least one special character": "Mật khẩu phải chứa ít nhất một ký tự đặc biệt",
@@ -157,6 +159,7 @@
     "Inactivity timeout": "Hết thời gian chờ do không hoạt động",
     "Keycloak syncer": "Bộ đồng bộ Keycloak",
     "MCP gateway": "Cổng MCP",
+    "MCP management tools": "Công cụ quản lý MCP",
     "MCP tool call approval": "Phê duyệt lệnh gọi công cụ MCP",
     "MLPS compliance checklist": "Danh sách kiểm tra tuân thủ MLPS",
     "Mobile one-click login": "Đăng nhập một chạm bằng số điện thoại",
@@ -166,13 +169,15 @@
     "Privileged account management": "Quản lý tài khoản đặc quyền",
     "Provisioning to legacy databases": "Cấp phát tài khoản vào cơ sở dữ liệu hệ thống cũ",
     "Push notification MFA": "MFA qua thông báo đẩy",
+    "Rollback of agent changes": "Hoàn tác thay đổi của tác tử",
     "SCIM provisioning": "Cấp phát tài khoản SCIM",
     "Security dashboard and reports": "Bảng điều khiển và báo cáo bảo mật",
     "Security policy": "Chính sách bảo mật",
     "Separation of duties": "Phân tách nhiệm vụ",
     "Signing key rotation": "Xoay vòng khóa ký",
     "Tamper-proof audit records": "Nhật ký kiểm toán chống giả mạo",
-    "Three-admin separation": "Tách biệt quản trị viên hệ thống, bảo mật và kiểm toán"
+    "Three-admin separation": "Tách biệt quản trị viên hệ thống, bảo mật và kiểm toán",
+    "Trusted organizations": "Tổ chức tin cậy"
   },
   "enforcer": {
     "the adapter: %s is not found": "không tìm thấy adapter: %s"
@@ -225,6 +230,7 @@
     "The user: %s cannot be more than one of the system, security and audit admins": "Người dùng: %s không thể kiêm nhiều hơn một vai trò quản trị hệ thống, bảo mật và kiểm toán",
     "The user: %s is already an admin of the organization": "Người dùng %s đã là quản trị viên của tổ chức",
     "The user: %s is listed twice as a delegated admin": "Người dùng %s bị liệt kê hai lần là quản trị viên được ủy quyền",
+    "Unknown approval of agent changes: %s": "Thiết lập phê duyệt thay đổi của tác tử không xác định: %s",
     "You cannot review your own access": "Bạn không thể tự rà soát quyền của mình",
     "You have %d access items to review by %s. Open My access reviews in the console to keep or revoke them.": "Bạn có %d quyền truy cập cần rà soát trước %s. Hãy mở Rà soát của tôi trong bảng điều khiển để giữ hoặc thu hồi."
   },
@@ -358,6 +364,7 @@
     "Too many requests, please try again later": "Quá nhiều yêu cầu, vui lòng thử lại sau"
   },
   "session": {
+    "The current session cannot be ended here, sign out instead": "Không thể kết thúc phiên hiện tại tại đây, hãy đăng xuất",
     "session id %s is the current session and cannot be deleted": "id phiên %s là phiên hiện tại và không thể bị xóa"
   },
   "storage": {

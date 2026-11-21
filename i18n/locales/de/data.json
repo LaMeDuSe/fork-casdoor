@@ -30,6 +30,7 @@
     "Invalid token": "Ungültiges Token",
     "Please sign in again": "Bitte melden Sie sich erneut an",
     "Requested scope exceeds original device authorization scope": "Der angeforderte Scope überschreitet den Scope der ursprünglichen Geräteautorisierung",
+    "Signing in with a verification code or a magic link is not enabled for your account": "Die Anmeldung mit einem Bestätigungscode oder Magic Link ist für Ihr Konto nicht aktiviert",
     "State expected: %s, but got: %s": "Erwarteter Zustand: %s, aber erhalten: %s",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account via %s, please use another way to sign up": "Das Konto für den Anbieter: %s und Benutzernamen: %s (%s) existiert nicht und darf nicht über %s als neues Konto erstellt werden. Bitte nutzen Sie einen anderen Weg, um sich anzumelden",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account, please contact your IT support": "Das Konto für den Anbieter %s und Benutzernamen %s (%s) existiert nicht und es ist nicht erlaubt, ein neues Konto anzumelden. Bitte wenden Sie sich an Ihren IT-Support",
@@ -107,6 +108,7 @@
     "Please register using the username corresponding to the invitation code": "Bitte registrieren Sie sich mit dem Benutzernamen, der zum Einladungscode gehört",
     "Session outdated, please login again": "Sitzung abgelaufen, bitte erneut anmelden",
     "The account has already linked another %s account": "The account has already linked another %s account",
+    "The email domain: %s is not allowed to sign up": "Die E-Mail-Domain: %s ist für die Registrierung nicht zugelassen",
     "The invitation code has already been used": "Der Einladungscode wurde bereits verwendet",
     "The password is not allowed: %s": "Dieses Passwort ist nicht erlaubt: %s",
     "The password must contain at least one special character": "Das Passwort muss mindestens ein Sonderzeichen enthalten",
@@ -157,6 +159,7 @@
     "Inactivity timeout": "Zeitlimit bei Inaktivität",
     "Keycloak syncer": "Keycloak-Synchronisierer",
     "MCP gateway": "MCP-Gateway",
+    "MCP management tools": "MCP-Verwaltungstools",
     "MCP tool call approval": "Freigabe von MCP-Tool-Aufrufen",
     "MLPS compliance checklist": "MLPS-Compliance-Checkliste",
     "Mobile one-click login": "Ein-Klick-Anmeldung mit der Mobilnummer",
@@ -166,13 +169,15 @@
     "Privileged account management": "Verwaltung privilegierter Konten",
     "Provisioning to legacy databases": "Bereitstellung in Altsystem-Datenbanken",
     "Push notification MFA": "MFA per Push-Benachrichtigung",
+    "Rollback of agent changes": "Zurücknehmen von Agentenänderungen",
     "SCIM provisioning": "SCIM-Bereitstellung",
     "Security dashboard and reports": "Sicherheits-Dashboard und Berichte",
     "Security policy": "Sicherheitsrichtlinie",
     "Separation of duties": "Funktionstrennung",
     "Signing key rotation": "Rotation des Signaturschlüssels",
     "Tamper-proof audit records": "Manipulationssichere Audit-Protokolle",
-    "Three-admin separation": "Trennung von System-, Sicherheits- und Audit-Administratoren"
+    "Three-admin separation": "Trennung von System-, Sicherheits- und Audit-Administratoren",
+    "Trusted organizations": "Vertrauenswürdige Organisationen"
   },
   "enforcer": {
     "the adapter: %s is not found": "Der Adapter: %s wurde nicht gefunden"
@@ -225,6 +230,7 @@
     "The user: %s cannot be more than one of the system, security and audit admins": "Der Benutzer: %s kann nicht mehrere der Rollen System-, Sicherheits- und Audit-Administrator haben",
     "The user: %s is already an admin of the organization": "Der Benutzer %s ist bereits Administrator der Organisation",
     "The user: %s is listed twice as a delegated admin": "Der Benutzer %s ist zweimal als delegierter Administrator eingetragen",
+    "Unknown approval of agent changes: %s": "Unbekannte Freigabe von Agentenänderungen: %s",
     "You cannot review your own access": "Sie können Ihren eigenen Zugriff nicht überprüfen",
     "You have %d access items to review by %s. Open My access reviews in the console to keep or revoke them.": "Sie haben bis %[2]s noch %[1]d Zugriffe zu prüfen. Öffnen Sie „Meine Zugriffsüberprüfungen“ in der Konsole, um sie zu behalten oder zu entziehen."
   },
@@ -358,6 +364,7 @@
     "Too many requests, please try again later": "Zu viele Anfragen, bitte versuchen Sie es später erneut"
   },
   "session": {
+    "The current session cannot be ended here, sign out instead": "Die aktuelle Sitzung kann hier nicht beendet werden, melden Sie sich stattdessen ab",
     "session id %s is the current session and cannot be deleted": "Sitzungs-ID %s ist die aktuelle Sitzung und kann nicht gelöscht werden"
   },
   "storage": {

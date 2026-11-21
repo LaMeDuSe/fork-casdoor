@@ -312,6 +312,12 @@ export default function OrganizationEditPage() {
           <FormRow labelKey="organization:Tags">
             <TagsInput value={organization.tags ?? []} onChange={(value) => update("tags", value)} />
           </FormRow>
+          <FormRow labelKey="organization:Blocked email domains">
+            <TagsInput value={organization.blockedEmailDomains ?? []} onChange={(value) => update("blockedEmailDomains", value)} />
+          </FormRow>
+          <FormRow labelKey="organization:Block disposable emails">
+            <Switch checked={!!organization.blockDisposableEmails} onCheckedChange={(v) => update("blockDisposableEmails", v)} />
+          </FormRow>
           <FormRow labelKey="general:Enable tour">
             <Switch checked={!!organization.enableTour} onCheckedChange={(v) => update("enableTour", v)} />
           </FormRow>
@@ -585,6 +591,12 @@ export default function OrganizationEditPage() {
               onChange={(e) => update("trustedDbHosts", e.target.value)}
             />
           </FormRow>
+          {organization.name !== "built-in" ? (
+            <FormRow labelKey="organization:Trusted organization">
+              <Switch checked={!!organization.isTrusted} disabled={!Setting.isAdminUser(account)} onCheckedChange={(v) => update("isTrusted", v)} />
+              {organization.isTrusted ? <EditionNotice /> : null}
+            </FormRow>
+          ) : null}
           <FormRow labelKey="organization:Init score">
             <Input
               type="number"

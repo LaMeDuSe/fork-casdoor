@@ -30,6 +30,7 @@
     "Invalid token": "Недійсний токен",
     "Please sign in again": "Увійдіть ще раз",
     "Requested scope exceeds original device authorization scope": "Запитана область перевищує область початкової авторизації пристрою",
+    "Signing in with a verification code or a magic link is not enabled for your account": "Вхід за кодом підтвердження або магічним посиланням для вашого облікового запису не ввімкнено",
     "State expected: %s, but got: %s": "Очікувалося стан: %s, але отримано: %s",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account via %s, please use another way to sign up": "Обліковий запис для провайдера: %s та імені користувача: %s (%s) не існує і не дозволяється реєструвати як новий через %s, використайте інший спосіб",
     "The account for provider: %s and username: %s (%s) does not exist and is not allowed to sign up as new account, please contact your IT support": "Обліковий запис для провайдера: %s та імені користувача: %s (%s) не існує і не дозволяється реєструвати як новий, зверніться до IT-підтримки",
@@ -107,6 +108,7 @@
     "Please register using the username corresponding to the invitation code": "Будь ласка, зареєструйтесь, використовуючи ім’я користувача, що відповідає коду запрошення",
     "Session outdated, please login again": "Сесію застаро, будь ласка, увійдіть знову",
     "The account has already linked another %s account": "The account has already linked another %s account",
+    "The email domain: %s is not allowed to sign up": "Домен електронної пошти: %s не дозволено для реєстрації",
     "The invitation code has already been used": "Код запрошення вже використано",
     "The password is not allowed: %s": "Цей пароль не дозволено: %s",
     "The password must contain at least one special character": "Пароль повинен містити принаймні один спеціальний символ",
@@ -157,6 +159,7 @@
     "Inactivity timeout": "Тайм-аут неактивності",
     "Keycloak syncer": "Синхронізатор Keycloak",
     "MCP gateway": "Шлюз MCP",
+    "MCP management tools": "Інструменти керування MCP",
     "MCP tool call approval": "Погодження викликів інструментів MCP",
     "MLPS compliance checklist": "Контрольний список відповідності MLPS",
     "Mobile one-click login": "Вхід в один дотик за номером телефону",
@@ -166,13 +169,15 @@
     "Privileged account management": "Керування привілейованими обліковими записами",
     "Provisioning to legacy databases": "Надання облікових записів у бази старих систем",
     "Push notification MFA": "MFA через push-сповіщення",
+    "Rollback of agent changes": "Відкат змін агентів",
     "SCIM provisioning": "Надання облікових записів через SCIM",
     "Security dashboard and reports": "Панель безпеки та звіти",
     "Security policy": "Політика безпеки",
     "Separation of duties": "Розподіл обов'язків",
     "Signing key rotation": "Ротація ключа підпису",
     "Tamper-proof audit records": "Захищені від підробки журнали аудиту",
-    "Three-admin separation": "Розділення адміністраторів системи, безпеки та аудиту"
+    "Three-admin separation": "Розділення адміністраторів системи, безпеки та аудиту",
+    "Trusted organizations": "Довірені організації"
   },
   "enforcer": {
     "the adapter: %s is not found": "адаптер: %s не знайдено"
@@ -225,6 +230,7 @@
     "The user: %s cannot be more than one of the system, security and audit admins": "Користувач %s не може бути більш ніж одним з адміністраторів системи, безпеки та аудиту",
     "The user: %s is already an admin of the organization": "Користувач %s уже є адміністратором організації",
     "The user: %s is listed twice as a delegated admin": "Користувача %s двічі вказано як делегованого адміністратора",
+    "Unknown approval of agent changes: %s": "Невідоме погодження змін агентів: %s",
     "You cannot review your own access": "Ви не можете переглядати власний доступ",
     "You have %d access items to review by %s. Open My access reviews in the console to keep or revoke them.": "У вас %d доступів для перегляду до %s. Відкрийте «Мої перегляди доступу» в консолі, щоб залишити або відкликати їх."
   },
@@ -358,6 +364,7 @@
     "Too many requests, please try again later": "Забагато запитів, спробуйте пізніше"
   },
   "session": {
+    "The current session cannot be ended here, sign out instead": "Поточний сеанс не можна завершити тут, натомість вийдіть із системи",
     "session id %s is the current session and cannot be deleted": "ідентифікатор сесії %s є поточною сесією і не може бути видалений"
   },
   "storage": {

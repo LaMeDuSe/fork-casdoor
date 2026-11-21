@@ -95,6 +95,8 @@ p, *, *, POST, /api/mfa/push/send, *, *
 p, *, *, GET, /api/get-user-personal-info, *, *
 p, *, *, GET, /api/get-mcp-records, *, *
 p, *, *, GET, /api/get-my-mcp-servers, *, *
+p, *, *, GET, /api/get-my-sessions, *, *
+p, *, *, POST, /api/delete-my-session, *, *
 p, *, *, GET, /api/get-form-fill-sites, *, *
 p, *, *, GET, /api/get-form-fill-account, *, *
 p, *, *, POST, /api/save-form-fill-account, *, *
@@ -204,6 +206,11 @@ func IsAllowed(subOwner string, subName string, method string, urlPath string, o
 
 		// only a tool call acts on objects, the MCP server answers the other methods by itself
 		if detailPath, _ := extraInfo["detailPathUrl"].(string); detailPath != "tools/call" {
+			return true, nil
+		}
+
+		// a tool that an extension adds acts through the REST APIs, every call of them is authorized by itself
+		if isExtraTool, _ := extraInfo["isExtraTool"].(bool); isExtraTool {
 			return true, nil
 		}
 	}
